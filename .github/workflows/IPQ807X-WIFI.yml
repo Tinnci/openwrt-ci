@@ -20,6 +20,7 @@ env:
 
 jobs:
   Build:
+    if: ${{ false }}  # Disabled: Not applicable for Redmi AX5 JDCloud
     runs-on: ubuntu-22.04
 
     steps:
