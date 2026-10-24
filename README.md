@@ -38,10 +38,17 @@
 - 配置检查只对相关路径的 `main` 提交、PR 或手动运行触发；同一分支/PR 的旧检查
   会取消，不在普通功能分支的每次 push 上重复运行。
 - 所有活动 Action 均固定到完整提交 SHA；更新时应审查对应上游变化。
+  官方 Actions 使用原生 Node.js 24 版本：checkout v7.0.1、cache v6.1.0、
+  upload-artifact v7.0.2、download-artifact v8.0.2；已逐一核对锁定版本的
+  `action.yml`。磁盘准备 Action 为 composite，无 Node.js 运行时。
+  沿用 Ubuntu 24.04 GitHub 托管 runner，不通过环境变量强制切换旧 Action 的运行时。
 - 构建和检查显式设置 `contents: read`，checkout 不保留凭据；仅显式发布的 job
   获得 `contents: write`，发布前核对下载产物的 SHA256。
 - 检查超时 10/30 分钟，完整构建上限 360 分钟，发布上限 15 分钟。
   固件 Artifact 保留 14 天，诊断和配置保留 7 天；编译缓存由 GitHub 配额策略管理。
+- 编译缓存按锁文件、种子配置、feeds 补丁和定制脚本隔离；每次运行/重试单独保存，
+  恢复时只匹配同组输入。固件 Artifact 不再二次压缩已压缩的固件及归档，
+  诊断日志仍使用默认压缩；Artifact 下载后仍是 ZIP 容器。
 - 不自动发布、不自动刷机。显式发布仍会替换稳定入口的旧附件，请先确认新构建。
 
 首次启用 fork Actions 前，请在仓库 **Settings → Actions → General** 将默认

@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 01 - 检出构建仓库
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
         with:
           persist-credentials: false
       - name: 02 - 运行单元测试与工作流策略检查
@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: 01 - 检出构建仓库
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
         with:
           persist-credentials: false
       - name: 02 - 生成统一构建标识
@@ -74,7 +74,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" configure .
       - name: 05 - 上传配置与溯源诊断
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node.js 24
         with:
           name: ${{ steps.identity.outputs.config_artifact || format('ax5-jdcloud-config-r{0}-a{1}', github.run_id, github.run_attempt) }}
           include-hidden-files: true

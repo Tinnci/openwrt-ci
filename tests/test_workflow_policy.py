@@ -16,6 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
 BUILD = "IPQ60XX-CUSTOM-WIFI.yml"
 CHECK = "check-ax5.yml"
+# These exact upstream action.yml revisions were checked to use runs.using=node24.
+NODE24_ACTIONS = {
+    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "actions/cache": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    "actions/upload-artifact": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    "actions/download-artifact": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+}
 
 
 class WorkflowPolicyTests(unittest.TestCase):
@@ -51,6 +58,18 @@ class WorkflowPolicyTests(unittest.TestCase):
                     text.count("persist-credentials: false"),
                 )
 
+    def test_official_actions_use_verified_node24_revisions(self):
+        seen = set()
+        for name, text in self.workflows.items():
+            for action, revision in re.findall(r"uses:\s*(actions/[\w-]+)@([0-9a-f]+)", text):
+                with self.subTest(workflow=name, action=action):
+                    self.assertIn(action, NODE24_ACTIONS)
+                    self.assertEqual(revision, NODE24_ACTIONS[action])
+                    seen.add(action)
+            self.assertNotIn("ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION", text)
+            self.assertNotIn("FORCE_JAVASCRIPT_ACTIONS_TO_NODE24", text)
+        self.assertEqual(seen, set(NODE24_ACTIONS))
+
     def test_build_is_manual_and_publish_requires_main(self):
         text = self.workflows[BUILD]
         events = text.split("\npermissions:", 1)[0]
@@ -74,6 +93,25 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("BUILD_ID: ${{ needs.build.outputs.build_id }}", text)
         self.assertIn('tag="$BUILD_ID"', text)
         self.assertIn("steps.identity.outputs.config_artifact", self.workflows[CHECK])
+
+    def test_cache_tracks_build_inputs_and_allows_retry_saves(self):
+        text = self.workflows[BUILD]
+        cache = text.split("path: openwrt/.ccache\n", 1)[1].split("\n      - name:", 1)[0]
+        hashes = re.findall(r"\$\{\{ hashFiles\((.*?)\) \}\}", cache)
+        self.assertEqual(len(hashes), 2)
+        self.assertEqual(hashes[0], hashes[1])
+        for path in (
+            "configs/ax5-build.lock.json", "configs/ipq60xx-custom-wifi.config",
+            "patches/feeds/**", "scripts/customize-ax5.sh",
+        ):
+            self.assertIn(f"'{path}'", hashes[0])
+        self.assertIn("${{ github.run_id }}-${{ github.run_attempt }}", cache)
+
+    def test_precompressed_firmware_is_not_compressed_again(self):
+        text = self.workflows[BUILD]
+        upload = text.split("path: openwrt/dist/\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("compression-level: 0", upload)
+        self.assertIn("if-no-files-found: error", upload)
 
     def test_config_seed_is_applied_only_after_feeds_install(self):
         for name, text in self.workflows.items():
