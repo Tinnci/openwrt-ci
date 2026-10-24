@@ -1,4 +1,5 @@
-name: IPQ60XX-CUSTOM-WIFI
+name: AX5 JDCloud - Build firmware
+run-name: AX5 JDCloud - Build ${{ github.run_number }} - ${{ github.ref_name }} - publish=${{ inputs.publish }}
 
 on:
   workflow_dispatch:
@@ -25,10 +26,14 @@ defaults:
 
 jobs:
   build:
+    name: AX5 JDCloud - 编译与打包
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    outputs:
+      build_id: ${{ steps.identity.outputs.build_id }}
+      firmware_artifact: ${{ steps.identity.outputs.firmware_artifact }}
     steps:
-      - name: Allocate build disk and swap
+      - name: 01 - 准备构建磁盘与交换空间
         uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
         with:
           swap-size-mb: 4096
@@ -39,16 +44,21 @@ jobs:
           remove-haskell: "true"
           remove-codeql: "true"
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: 02 - 检出构建仓库
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - name: Test build helpers
+      - name: 03 - 生成统一构建标识
+        id: identity
+        run: python3 scripts/ax5-build.py identity
+
+      - name: 04 - 检查构建脚本与策略
         run: |
           python3 -m unittest discover -s tests -v
           bash -n scripts/customize-ax5.sh
 
-      - name: Install build dependencies
+      - name: 05 - 安装编译依赖
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -62,12 +72,12 @@ jobs:
             libfuse-dev liblzma-dev help2man patch perl
           df -h
 
-      - name: Fetch locked source and configure feeds
+      - name: 06 - 拉取锁定源码与配置
         run: |
           python3 scripts/ax5-build.py clone "$OPENWRT_PATH"
           python3 scripts/ax5-build.py prepare "$OPENWRT_PATH"
 
-      - name: Restore compiler cache
+      - name: 07 - 恢复编译器缓存
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: openwrt/.ccache
@@ -75,46 +85,48 @@ jobs:
           restore-keys: |
             ax5-ccache-${{ runner.os }}-${{ hashFiles('configs/ax5-build.lock.json', 'configs/ipq60xx-custom-wifi.config') }}-
 
-      - name: Install locked feeds and customize
+      - name: 08 - 安装 feeds 并核验配置
         working-directory: openwrt
         run: |
           ./scripts/feeds update -a
+          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" patch-feeds .
           ./scripts/feeds install -a
           bash "$GITHUB_WORKSPACE/scripts/customize-ax5.sh"
-          make defconfig
-          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" verify .
-          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" snapshot .
+          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" configure .
 
-      - name: Download sources
+      - name: 09 - 下载源码包
         working-directory: openwrt
-        run: make download -j8
+        run: |
+          mkdir -p logs/ci
+          make download -j8 2>&1 | tee logs/ci/01-download.log
 
-      - name: Compile firmware
+      - name: 10 - 并行编译（失败后单线程诊断）
         working-directory: openwrt
         run: |
           set -o pipefail
-          make -j"$(nproc)" 2>&1 | tee build.log || \
-            make -j1 V=s 2>&1 | tee -a build.log
+          if ! make -j"$(nproc)" 2>&1 | tee logs/ci/02-compile.log; then
+            echo "::warning::Parallel build failed; retrying with one job and verbose output"
+            make -j1 V=s 2>&1 | tee logs/ci/03-compile-retry.log
+          fi
 
-      - name: Bundle firmware and matching packages
+      - name: 11 - 审计内核并打包产物
         run: python3 scripts/ax5-build.py bundle "$OPENWRT_PATH"
 
-      - name: Upload firmware, packages and provenance
+      - name: 12 - 上传固件、配套 APK 与溯源文件
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ax5-jdcloud-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.identity.outputs.firmware_artifact }}
           path: openwrt/dist/
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload diagnostics
+      - name: 13 - 上传诊断日志（含失败现场）
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ax5-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.identity.outputs.diagnostics_artifact || format('ax5-jdcloud-diagnostics-r{0}-a{1}', github.run_id, github.run_attempt) }}
           include-hidden-files: true
           path: |
-            openwrt/build.log
             openwrt/logs/
             openwrt/.config
             openwrt/provenance/
@@ -122,35 +134,39 @@ jobs:
           retention-days: 7
 
   publish:
+    name: AX5 JDCloud - 发布已校验产物
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
+    env:
+      BUILD_ID: ${{ needs.build.outputs.build_id }}
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: 01 - 下载本次构建产物
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ax5-jdcloud-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.build.outputs.firmware_artifact }}
           path: dist
 
-      - name: Verify downloaded artifacts
+      - name: 02 - 核验 SHA256
         working-directory: dist
-        run: sha256sum --check SHA256SUMS
+        run: sha256sum --check "$BUILD_ID-sha256sums.txt"
 
-      - name: Publish historical archive and refresh stable assets
+      - name: 03 - 发布历史版本并刷新稳定下载入口
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           BUILD_COMMIT: ${{ github.sha }}
         run: |
-          tag="IPQ60XX-CUSTOM-WIFI-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          tag="$BUILD_ID"
           gh release create "$tag" dist/* --target "$BUILD_COMMIT" \
-            --title "AX5 JDCloud $tag" --notes-file dist/RELEASE.md --latest=false
+            --title "$BUILD_ID" --notes-file "dist/$BUILD_ID-release.md" --latest=false
           stable=IPQ60XX-CUSTOM-WIFI
           if ! gh release view "$stable" >/dev/null 2>&1; then
             gh release create "$stable" --target "$BUILD_COMMIT" \
-              --title "AX5 JDCloud — latest published build" --notes-file dist/RELEASE.md --latest
+              --title "AX5 JDCloud — latest published build" --notes-file "dist/$BUILD_ID-release.md" --latest
           fi
           # Stable is a download alias, not an immutable build reference.
           gh release view "$stable" --json assets --jq '.assets[].name' |
@@ -158,4 +174,4 @@ jobs:
               gh release delete-asset "$stable" "$asset" --yes
             done
           gh release upload "$stable" dist/*
-          gh release edit "$stable" --notes-file dist/RELEASE.md --latest
+          gh release edit "$stable" --notes-file "dist/$BUILD_ID-release.md" --latest

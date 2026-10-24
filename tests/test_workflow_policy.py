@@ -4,8 +4,12 @@ These text-level policy checks complement (not replace) actionlint's YAML and
 GitHub expression validation. Archived upstream YAML is intentionally excluded.
 """
 
+import os
 from pathlib import Path
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,7 +64,65 @@ class WorkflowPolicyTests(unittest.TestCase):
         # Only the separate publish job may write; builds never inherit write.
         self.assertEqual(text.count("contents: write"), 1)
         self.assertNotIn("contents: write", text.split("\n  publish:", 1)[0])
-        self.assertIn("run: sha256sum --check SHA256SUMS", text)
+        self.assertIn('run: sha256sum --check "$BUILD_ID-sha256sums.txt"', text)
+
+    def test_artifact_names_flow_from_shared_identity(self):
+        text = self.workflows[BUILD]
+        self.assertIn("run: python3 scripts/ax5-build.py identity", text)
+        self.assertIn("name: ${{ steps.identity.outputs.firmware_artifact }}", text)
+        self.assertIn("name: ${{ needs.build.outputs.firmware_artifact }}", text)
+        self.assertIn("BUILD_ID: ${{ needs.build.outputs.build_id }}", text)
+        self.assertIn('tag="$BUILD_ID"', text)
+        self.assertIn("steps.identity.outputs.config_artifact", self.workflows[CHECK])
+
+    def test_config_seed_is_applied_only_after_feeds_install(self):
+        for name, text in self.workflows.items():
+            if name == CHECK:
+                text = text.split("\n  config:", 1)[1]
+            with self.subTest(workflow=name):
+                self.assertLess(text.index("./scripts/feeds update -a"),
+                                text.index('ax5-build.py" patch-feeds .'))
+                self.assertLess(text.index('ax5-build.py" patch-feeds .'),
+                                text.index("./scripts/feeds install -a"))
+                self.assertLess(text.index("./scripts/feeds install -a"),
+                                text.index('ax5-build.py" configure .'))
+                self.assertNotIn("\n          make defconfig", text)
+        self.assertIn('"patches/feeds/**"', self.workflows[CHECK])
+
+    def test_compile_logs_and_retry_preserve_failure_status(self):
+        block = re.search(
+            r"(?m)^          set -o pipefail\n(?:          .*\n)+",
+            self.workflows[BUILD],
+        )
+        self.assertIsNotNone(block)
+        script = textwrap.dedent(block.group())
+        for parallel, retry, expected in ((0, 1, 0), (1, 0, 0), (1, 2, 2)):
+            with self.subTest(parallel=parallel, retry=retry):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "logs/ci").mkdir(parents=True)
+                    (root / "bin").mkdir()
+                    make = root / "bin/make"
+                    make.write_text(
+                        '#!/bin/sh\n'
+                        'echo "make $*"\n'
+                        'if [ "$1" = "-j1" ]; then exit "$RETRY_STATUS"; fi\n'
+                        'exit "$PARALLEL_STATUS"\n'
+                    )
+                    make.chmod(0o755)
+                    result = subprocess.run(
+                        ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root,
+                        env={
+                            **os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
+                            "PARALLEL_STATUS": str(parallel), "RETRY_STATUS": str(retry),
+                        },
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                    self.assertTrue((root / "logs/ci/02-compile.log").is_file())
+                    self.assertEqual(
+                        (root / "logs/ci/03-compile-retry.log").is_file(), parallel != 0
+                    )
 
     def test_checks_limit_duplicate_work(self):
         text = self.workflows[CHECK]

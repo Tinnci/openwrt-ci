@@ -1,4 +1,5 @@
-name: Check AX5 build helpers
+name: AX5 JDCloud - Check configuration
+run-name: AX5 JDCloud - Check ${{ github.run_number }} - ${{ github.head_ref || github.ref_name }}
 
 on:
   push:
@@ -9,12 +10,14 @@ on:
       - "scripts/customize-ax5.sh"
       - "configs/ax5-build.lock.json"
       - "configs/ipq60xx-custom-wifi.config"
+      - "patches/feeds/**"
       - "tests/**"
   pull_request:
     paths:
       - ".github/workflows/**"
       - "scripts/**"
       - "configs/**"
+      - "patches/feeds/**"
       - "tests/**"
   workflow_dispatch:
 
@@ -27,44 +30,53 @@ concurrency:
 
 jobs:
   check:
+    name: AX5 JDCloud - 脚本与安全策略
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: 01 - 检出构建仓库
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - run: python3 -m unittest discover -s tests -v
-      - run: bash -n scripts/customize-ax5.sh
-      - run: shellcheck scripts/customize-ax5.sh
+      - name: 02 - 运行单元测试与工作流策略检查
+        run: python3 -m unittest discover -s tests -v
+      - name: 03 - 检查 Shell 语法
+        run: bash -n scripts/customize-ax5.sh
+      - name: 04 - 检查 Shell 静态问题
+        run: shellcheck scripts/customize-ax5.sh
 
   config:
+    name: AX5 JDCloud - 真实源码配置核验
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: 01 - 检出构建仓库
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Install configuration prerequisites
+      - name: 02 - 生成统一构建标识
+        id: identity
+        run: python3 scripts/ax5-build.py identity
+      - name: 03 - 安装配置工具
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential gawk gettext libncurses-dev \
             libssl-dev python3-setuptools rsync swig unzip zlib1g-dev file wget
-      - name: Resolve real OpenWrt configuration
+      - name: 04 - 解析并核验 OpenWrt 配置
         run: |
           python3 scripts/ax5-build.py clone "$GITHUB_WORKSPACE/openwrt"
           python3 scripts/ax5-build.py prepare "$GITHUB_WORKSPACE/openwrt"
           cd openwrt
           ./scripts/feeds update -a
+          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" patch-feeds .
           ./scripts/feeds install -a
           bash "$GITHUB_WORKSPACE/scripts/customize-ax5.sh"
-          make defconfig
-          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" verify .
-          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" snapshot .
-      - name: Upload resolved config
+          python3 "$GITHUB_WORKSPACE/scripts/ax5-build.py" configure .
+      - name: 05 - 上传配置与溯源诊断
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ax5-config-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.identity.outputs.config_artifact || format('ax5-jdcloud-config-r{0}-a{1}', github.run_id, github.run_attempt) }}
           include-hidden-files: true
           path: |
             openwrt/.config

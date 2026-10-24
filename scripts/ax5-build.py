@@ -14,6 +14,7 @@ import tarfile
 REPO = Path(__file__).resolve().parents[1]
 LOCK_PATH = REPO / "configs/ax5-build.lock.json"
 SEED = REPO / "configs/ipq60xx-custom-wifi.config"
+FEED_PATCH = REPO / "patches/feeds/0001-luci-weechat-select-concrete-provider.patch"
 DEVICE = "redmi_ax5-jdcloud"
 TARGET = Path("bin/targets/qualcommax/ipq60xx")
 REQUIRED = (
@@ -77,12 +78,39 @@ def prepare(root):
         raise ValueError("Source HEAD does not match lock file")
     if (root / "feeds.conf").exists():
         raise ValueError("feeds.conf would override the locked feeds")
+    if (root / ".config").exists():
+        raise ValueError("Prepare requires no .config: feeds update would silently rewrite it")
     # ^commit is the OpenWrt feeds script's immutable revision syntax.
     (root / "feeds.conf.default").write_text("".join(
         f"src-git {feed['name']} {feed['url']}^{feed['commit']}\n"
         for feed in lock["feeds"]
     ))
+
+
+def verify_revisions(root):
+    lock = load_lock()
+    if git(root, "rev-parse", "HEAD") != lock["source"]["commit"]:
+        raise ValueError("Source HEAD does not match lock file")
+    for feed in lock["feeds"]:
+        if git(root / "feeds" / feed["name"], "rev-parse", "HEAD") != feed["commit"]:
+            raise ValueError(f"Feed revision mismatch: {feed['name']}")
+
+
+def patch_feeds(root):
+    verify_revisions(root)
+    command = ["git", "-C", str(root / "feeds/luci"), "apply"]
+    # Fail on changed context instead of silently skipping or patching another version.
+    subprocess.run([*command, "--check", str(FEED_PATCH)], check=True)
+    subprocess.run([*command, str(FEED_PATCH)], check=True)
+
+
+def configure(root):
+    verify_revisions(root)
+    # feeds update refreshes any existing .config before packages are installed.
+    # Restore the seed only after feed update, patching and installation are complete.
     shutil.copyfile(SEED, root / ".config")
+    subprocess.run(["make", "defconfig", "RECURSIVE_DEP_IS_ERROR=1"], cwd=root, check=True)
+    snapshot(root)
 
 
 def config_values(text):
@@ -90,10 +118,46 @@ def config_values(text):
                 if line.startswith("CONFIG_") and "=" in line)
 
 
+def build_identity():
+    source = load_lock()["source"]
+    ci_commit = git(REPO, "rev-parse", "HEAD")
+    if not re.fullmatch(r"[0-9a-f]{40}", ci_commit):
+        raise ValueError("Expected a full CI commit SHA")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", source["kernel"]):
+        raise ValueError("Expected a numeric kernel version for artifact names")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    if run_id is not None and (
+        not re.fullmatch(r"[1-9]\d*", run_id) or not re.fullmatch(r"[1-9]\d*", attempt)
+    ):
+        raise ValueError("Expected numeric GitHub run ID and attempt")
+    run = f"r{run_id}-a{attempt}" if run_id else "local"
+    build_id = (
+        f"libwrt-ax5-jdcloud-k{source['kernel']}"
+        f"-s{source['commit'][:12]}-c{ci_commit[:12]}-{run}"
+    )
+    return {
+        "build_id": build_id,
+        "kernel": source["kernel"],
+        "firmware_artifact": f"{build_id}-firmware",
+        "diagnostics_artifact": f"{build_id}-diagnostics",
+        "config_artifact": f"{build_id}-config",
+    }
+
+
+def identity():
+    """Export the same naming metadata used by packaging and both workflows."""
+    metadata = build_identity()
+    print(json.dumps(metadata, indent=2))
+    if "GITHUB_OUTPUT" in os.environ:
+        with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+            for key, value in metadata.items():
+                stream.write(f"{key}={value}\n")
+
+
 def verify(root):
     lock = load_lock()
-    if git(root, "rev-parse", "HEAD") != lock["source"]["commit"]:
-        raise ValueError("Source HEAD does not match lock file")
+    verify_revisions(root)
     config = config_values((root / ".config").read_text())
     # Kconfig silently drops unavailable symbols. Check every requested boolean,
     # not just the small set of packages required for artifact validation.
@@ -121,9 +185,6 @@ def verify(root):
     suffix = re.search(r"^LINUX_VERSION-6\.12\s*=\s*(\.\d+)\s*$", version, re.M)
     if not suffix or "6.12" + suffix[1] != lock["source"]["kernel"]:
         raise ValueError("Unexpected kernel version")
-    for feed in lock["feeds"]:
-        if git(root / "feeds" / feed["name"], "rev-parse", "HEAD") != feed["commit"]:
-            raise ValueError(f"Feed revision mismatch: {feed['name']}")
 
 
 def snapshot(root):
@@ -133,11 +194,14 @@ def snapshot(root):
     shutil.copyfile(root / ".config", out / "build.config")
     shutil.copyfile(root / "feeds.conf.default", out / "feeds.conf")
     shutil.copyfile(LOCK_PATH, out / LOCK_PATH.name)
+    shutil.copyfile(FEED_PATCH, out / FEED_PATCH.name)
     subprocess.run(
         ["bash", "-c", "./scripts/diffconfig.sh > provenance/diffconfig"],
         cwd=root, check=True,
     )
     metadata = {
+        **build_identity(),
+        "feed_patches": {FEED_PATCH.name: hashlib.sha256(FEED_PATCH.read_bytes()).hexdigest()},
         "source": git(root, "rev-parse", "HEAD"),
         "ci_commit": git(REPO, "rev-parse", "HEAD"),
         "run_url": (
@@ -199,21 +263,40 @@ def bundle(root):
     for package in ("kernel", *requested_modules()):
         if not any(apk.name.startswith(package + "-") for apk in apks):
             raise ValueError(f"Missing matching {package} APK")
+    metadata = build_identity()
+    build_id = metadata["build_id"]
     out = root / "dist"
     out.mkdir(exist_ok=False)
     # Do not publish factory images for this unvalidated upgrade migration.
-    for path in [images[0], manifest, *target.glob("*.buildinfo")]:
-        shutil.copyfile(path, out / path.name)
+    files = {
+        "firmware": f"{build_id}-squashfs-sysupgrade.bin",
+        "manifest": f"{build_id}.manifest",
+        "packages": f"{build_id}-packages.tar.gz",
+        "provenance": f"{build_id}-provenance.tar.gz",
+        "checksums": f"{build_id}-sha256sums.txt",
+        "release_notes": f"{build_id}-release.md",
+    }
+    shutil.copyfile(images[0], out / files["firmware"])
+    shutil.copyfile(manifest, out / files["manifest"])
+    for path in target.glob("*.buildinfo"):
+        shutil.copyfile(path, out / f"{build_id}-{path.name}")
+    (out / f"{build_id}-build.json").write_text(json.dumps({
+        **metadata, "source": load_lock()["source"],
+        "ci_commit": git(REPO, "rev-parse", "HEAD"),
+        "original_firmware": images[0].name, "files": files,
+    }, indent=2) + "\n")
     shutil.copytree(root / "provenance", out / "provenance")
-    with tarfile.open(out / "Packages.tar.gz", "w:gz") as archive:
+    with tarfile.open(out / files["packages"], "w:gz") as archive:
         for apk in apks:
+            # Keep APK basenames and repository paths unchanged for installation.
             archive.add(apk, arcname=apk.relative_to(root / "bin"))
-    with tarfile.open(out / "Provenance.tar.gz", "w:gz") as archive:
+    with tarfile.open(out / files["provenance"], "w:gz") as archive:
         archive.add(out / "provenance", arcname="provenance")
     shutil.rmtree(out / "provenance")
     source = load_lock()["source"]
-    (out / "RELEASE.md").write_text(
+    (out / files["release_notes"]).write_text(
         f"# AX5 JDCloud test build\n\n"
+        f"- Build ID: `{build_id}`\n"
         f"- Source: {source['url']} @ `{source['commit']}` ({source['branch']})\n"
         f"- Kernel: {source['kernel']}\n"
         "- Default LAN address: 192.168.3.1\n"
@@ -223,9 +306,9 @@ def bundle(root):
         "Back up configuration and all shared/Time Machine data off the router first.\n"
         "Keeping settings does not guarantee /overlay data or mounts survive.\n"
         "Only the sysupgrade image is supplied; do not substitute a factory image.\n\n"
-        "Packages.tar.gz contains packages from this build, including kernel modules.\n"
+        f"`{files['packages']}` contains packages from this build, including kernel modules.\n"
         "Do not mix them with rolling snapshot feeds or another firmware build.\n"
-        "Provenance.tar.gz includes resolved OpenWrt/Linux configs, a kernel audit,\n"
+        f"`{files['provenance']}` includes resolved OpenWrt/Linux configs, a kernel audit,\n"
         "and source/feed revisions. Optional module APKs are not preinstalled.\n"
     )
     sums = []
@@ -233,15 +316,40 @@ def bundle(root):
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         sums.append(f"{digest}  {path.name}\n")
-    (out / "SHA256SUMS").write_text("".join(sums))
+    (out / files["checksums"]).write_text("".join(sums))
+    if "GITHUB_STEP_SUMMARY" in os.environ:
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
+            stream.write(
+                f"## AX5 JDCloud — packaged test build\n\n"
+                f"Build ID: `{build_id}`\n\n"
+                "**Not validated for flashing from the old mmc_do_upgrade firmware.**\n\n"
+                "| File | Bytes |\n| --- | ---: |\n"
+            )
+            for path in sorted(out.iterdir()):
+                stream.write(f"| `{path.name}` | {path.stat().st_size} |\n")
+            stream.write(
+                f"\nVerify after extraction: `sha256sum --check {files['checksums']}`\n"
+                "\nArtifact upload and optional publication are separate workflow steps.\n"
+            )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("clone", "prepare", "verify", "snapshot", "bundle"))
-    parser.add_argument("source", type=Path)
+    parser.add_argument(
+        "command", choices=(
+            "identity", "clone", "prepare", "patch-feeds", "configure", "verify", "snapshot", "bundle"
+        )
+    )
+    parser.add_argument("source", type=Path, nargs="?")
     args = parser.parse_args()
-    globals()[args.command](args.source.resolve())
+    if args.command == "identity":
+        if args.source is not None:
+            parser.error("identity does not take a source directory")
+        identity()
+    else:
+        if args.source is None:
+            parser.error("source directory is required")
+        globals()[args.command.replace("-", "_")](args.source.resolve())
 
 
 if __name__ == "__main__":

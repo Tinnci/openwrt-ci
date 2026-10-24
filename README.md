@@ -2,14 +2,14 @@
 
 ## 本仓库 AX5 京东云定制构建
 
-入口：Actions → **IPQ60XX-CUSTOM-WIFI** → Run workflow。仅构建 Redmi AX5 JDCloud，
+入口：Actions → **AX5 JDCloud - Build firmware** → Run workflow。仅构建 Redmi AX5 JDCloud，
 不再每天重复构建固定版本；10 个历史工作流已移至 `docs/legacy-workflows/`，
 不再被 GitHub Actions 识别，也不会自动清理历史 Release。
 
 - 源码和全部 feeds 固定在 `configs/ax5-build.lock.json` 的完整提交 SHA。
   当前基线为 LiBwrt/LibWrt `25.12-nss`，内核 `6.12.108`。
 - 默认只上传 Artifact；只有在 `main` 上手动运行并显式勾选 `publish` 才写入 Releases。
-  保留 `IPQ60XX-CUSTOM-WIFI` 稳定下载入口，历史标签包含时间、run ID 和重试编号。
+  保留 `IPQ60XX-CUSTOM-WIFI` 稳定下载入口，历史标签与产物统一使用构建标识。
   稳定入口的标签不代表其当前附件的源码；以附件中的 provenance 为准。
 - 默认 IP 为 **192.168.3.1**。不注入密码、SSH 密钥、磁盘 UUID 或本机挂载配置。
   凭据遵循上游默认值，首次使用前自行设置。
@@ -28,6 +28,13 @@
 
 当前 `.github/workflows/` 仅保留配置检查和手动 AX5 构建，无定时任务：
 
+- `prepare` 阶段只锁定 feeds，不提前创建 `.config`；feeds 更新会自动刷新已有配置，
+  因此必须在安装完成后由 `configure` 重新写入种子，并运行
+  `make defconfig RECURSIVE_DEP_IS_ERROR=1`，再校验全部显式选择。
+- 安装前应用 `patches/feeds/0001-luci-weechat-select-concrete-provider.patch`：
+  将锁定 LuCI 的 WeeChat 虚拟依赖指向默认的 `weechat-minimal`，避免 variant 冲突
+  引起全局 Kconfig 循环依赖。它不将 WeeChat 加入固件；补丁上下文变化时直接失败。
+  补丁文件及 SHA256 会记录在 provenance 中，源码/feeds 锁定提交保持不变。
 - 配置检查只对相关路径的 `main` 提交、PR 或手动运行触发；同一分支/PR 的旧检查
   会取消，不在普通功能分支的每次 push 上重复运行。
 - 所有活动 Action 均固定到完整提交 SHA；更新时应审查对应上游变化。
@@ -63,11 +70,35 @@ runner；Artifact/缓存配额与未来的计费策略仍需自行留意，不�
 打包时检查真正编译的 Linux `.config`、固件 manifest，以及同次构建的 kernel
 和全部显式请求的内核模块 APK。配置被依赖系统静默丢弃时使构建失败。
 
-- `*-sysupgrade.bin`、设备 manifest、`*.buildinfo`
-- `Packages.tar.gz`：同时收集 `bin/packages` 和目标目录的包，避免遗漏内核模块
-- `Provenance.tar.gz`：OpenWrt 与 Linux 完整配置、`kernel-audit.json`、
+- `<构建标识>-squashfs-sysupgrade.bin`、设备 manifest、`*.buildinfo`
+- `<构建标识>-packages.tar.gz`：同时收集 `bin/packages` 和目标目录的包，避免遗漏内核模块
+- `<构建标识>-provenance.tar.gz`：OpenWrt 与 Linux 完整配置、`kernel-audit.json`、
   diffconfig、锁文件和源码/feeds/CI 提交
-- `SHA256SUMS`、`RELEASE.md`
+- `<构建标识>-sha256sums.txt`、`<构建标识>-release.md`、`<构建标识>-build.json`
+
+统一构建标识示例：
+
+```text
+libwrt-ax5-jdcloud-k6.12.108-s3a3d0b085955-ce17601ad89f4-r40100409146-a1
+```
+
+其中 `s` 为上游源码 SHA 前 12 位，`c` 为本仓库 CI 提交 SHA 前 12 位，
+`r` 为 GitHub run ID，`a` 为重试编号。同一次构建的固件文件、配套包和历史 Release
+使用相同标识，Actions Artifact 则分别添加 `-firmware`、`-diagnostics`、`-config`。
+本地命令不依赖 GitHub 环境，后缀为 `-local`；它不是唯一的构建批次标识，也不表示工作区干净。
+`-build.json` 保留原始固件文件名及输出文件映射。仅重命名分发副本，不修改固件内容、
+APK 原始文件名或包内路径。解压 Artifact 后，在所在目录执行：
+
+```sh
+sha256sum --check ./*-sha256sums.txt
+```
+
+工作流文件名和稳定 Release 标签保持兼容；Actions 界面分别显示
+**AX5 JDCloud - Build firmware** 和 **AX5 JDCloud - Check configuration**，
+运行标题显示批次与分支，job/步骤显示设备、阶段序号及用途。
+下载、并行编译、失败后的单线程重试日志分别保存为 `logs/ci/01-download.log`、
+`02-compile.log`、`03-compile-retry.log`（仅重试时生成），随诊断 Artifact 上传。
+打包成功后，Actions Summary 会列出本批次文件、字节数和校验命令；不代表上传、发布或刷机验证成功。
 
 不要把这些 APK 与滚动 snapshot 软件源混装。固定提交不等于逐字节可复现：
 Ubuntu 软件包和构建工具仍由 runner 提供；需要严格复现时还应固定构建容器。
@@ -90,7 +121,7 @@ shellcheck scripts/customize-ax5.sh
 
 完整构建在 Ubuntu 24.04 的手动工作流中验证。修改锁文件时需重新检查 feeds 兼容性、
 `make defconfig` 校验及完整编译，不应把单元测试通过当作固件可用的证明。
-`Check AX5 build helpers` 还会在 Ubuntu 中拉取真实源码/feeds，运行 `make defconfig`
+`AX5 JDCloud - Check configuration` 还会在 Ubuntu 中拉取真实源码/feeds，运行 `make defconfig`
 并核对所有显式请求的 `=y` 选项及 `=m` 模块，避免不存在的包名被静默丢弃。
 
 下面保留的是原上游项目说明，其地址、下载链接及默认设置不适用于上述定制入口。

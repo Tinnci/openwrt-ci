@@ -1,6 +1,9 @@
+from contextlib import redirect_stdout
 import hashlib
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tarfile
@@ -17,6 +20,14 @@ SPEC.loader.exec_module(build)
 
 class BuildTests(unittest.TestCase):
     def setUp(self):
+        # Fixtures must not write fake firmware metadata to the real CI summary.
+        self.env_patch = patch.dict(
+            os.environ,
+            {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")},
+            clear=True,
+        )
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -42,6 +53,8 @@ class BuildTests(unittest.TestCase):
     def fake_git(self, root, *args):
         if Path(root) == self.root:
             return self.lock["source"]["commit"]
+        if Path(root) == build.REPO:
+            return "a" * 40
         return next(f["commit"] for f in self.lock["feeds"] if f["name"] == Path(root).name)
 
     def make_outputs(self):
@@ -75,12 +88,104 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(len(lines), len(set(lines)))
         self.assertTrue(all(f"CONFIG_PACKAGE_{name}=y" in self.config for name in build.REQUIRED))
 
+    def test_identity_is_stable_and_distinguishes_retries(self):
+        with patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}):
+            first = build.build_identity()
+            self.assertEqual(first, build.build_identity())
+        self.assertEqual(first["build_id"],
+                         "libwrt-ax5-jdcloud-k6.12.108-s3a3d0b085955-caaaaaaaaaaaa-r123-a1")
+        with patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}):
+            self.assertNotEqual(first["build_id"], build.build_identity()["build_id"])
+
+    def test_identity_marks_local_builds(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(build.build_identity()["build_id"].endswith("-local"))
+
+    def test_identity_rejects_unsafe_run_values(self):
+        for run_id, attempt in (("../bad", "1"), ("123", "1\nunsafe"), ("", "1")):
+            with self.subTest(run_id=run_id, attempt=attempt):
+                with patch.dict("os.environ", {
+                    "GITHUB_RUN_ID": run_id, "GITHUB_RUN_ATTEMPT": attempt,
+                }):
+                    with self.assertRaisesRegex(ValueError, "numeric GitHub"):
+                        build.build_identity()
+
+    def test_identity_exports_workflow_outputs(self):
+        output = self.root / "github-output"
+        with patch.dict("os.environ", {"GITHUB_OUTPUT": str(output)}):
+            with redirect_stdout(io.StringIO()) as stdout:
+                build.identity()
+        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        self.assertEqual(values, build.build_identity())
+        self.assertEqual(json.loads(stdout.getvalue()), values)
+
     def test_prepare_locks_all_feeds(self):
+        (self.root / ".config").unlink()
         build.prepare(self.root)
         feeds = (self.root / "feeds.conf.default").read_text()
         for feed in self.lock["feeds"]:
             self.assertIn(f"{feed['url']}^{feed['commit']}", feeds)
-        self.assertEqual((self.root / ".config").read_text(), build.SEED.read_text())
+        self.assertFalse((self.root / ".config").exists())
+
+    def test_prepare_rejects_early_config(self):
+        with self.assertRaisesRegex(ValueError, "silently rewrite"):
+            build.prepare(self.root)
+
+    def test_configure_restores_seed_after_feed_refresh(self):
+        (self.root / ".config").write_text("CONFIG_PACKAGE_luci=y\n")
+
+        def resolve(*args, **kwargs):
+            self.assertEqual((self.root / ".config").read_text(), build.SEED.read_text())
+            self.assertEqual(args[0], ["make", "defconfig", "RECURSIVE_DEP_IS_ERROR=1"])
+            self.assertEqual(kwargs["cwd"], self.root)
+
+        with patch.object(build.subprocess, "run", side_effect=resolve):
+            with patch.object(build, "snapshot") as snapshot:
+                build.configure(self.root)
+        snapshot.assert_called_once_with(self.root)
+
+    def test_configure_stops_on_kconfig_error(self):
+        with patch.object(build.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "make")):
+            with patch.object(build, "snapshot") as snapshot:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    build.configure(self.root)
+        snapshot.assert_not_called()
+
+    def test_patch_feeds_fixes_the_virtual_dependency(self):
+        recipe = self.root / "feeds/luci/applications/luci-app-weechat/Makefile"
+        recipe.parent.mkdir(parents=True)
+        recipe.write_text(
+            '# This is free software, licensed under the Apache License, Version 2.0 .\n\n'
+            'include $(TOPDIR)/rules.mk\n\n'
+            'LUCI_TITLE:=LuCI support for WeeChat IRC client\n'
+            'LUCI_DEPENDS:=+luci-base +weechat +rpcd-mod-ucode\n\n'
+            'PKG_LICENSE:=Apache-2.0\n'
+            'PKG_MAINTAINER:=Josef Schlehofer <pepe.schlehofer@gmail.com>\n'
+        )
+        build.patch_feeds(self.root)
+        self.assertIn("+weechat-minimal", recipe.read_text())
+        self.assertNotIn("+weechat ", recipe.read_text())
+
+    def test_patch_feeds_rejects_changed_context(self):
+        recipe = self.root / "feeds/luci/applications/luci-app-weechat/Makefile"
+        recipe.parent.mkdir(parents=True)
+        recipe.write_text("unexpected upstream content\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            build.patch_feeds(self.root)
+        self.assertEqual(recipe.read_text(), "unexpected upstream content\n")
+
+    def test_snapshot_records_feed_patch(self):
+        (self.root / "feeds.conf.default").write_text("locked feeds\n")
+        script = self.root / "scripts/diffconfig.sh"
+        script.parent.mkdir()
+        script.write_text("printf 'CONFIG_PACKAGE_luci=y\\n'\n")
+        script.chmod(0o755)
+        build.snapshot(self.root)
+        metadata = json.loads((self.root / "provenance/build.json").read_text())
+        self.assertEqual(metadata["feed_patches"][build.FEED_PATCH.name],
+                         hashlib.sha256(build.FEED_PATCH.read_bytes()).hexdigest())
+        self.assertEqual((self.root / "provenance" / build.FEED_PATCH.name).read_bytes(),
+                         build.FEED_PATCH.read_bytes())
 
     def test_prepare_rejects_feed_override(self):
         (self.root / "feeds.conf").touch()
@@ -177,18 +282,38 @@ class BuildTests(unittest.TestCase):
         self.make_outputs()
         build.bundle(self.root)
         out = self.root / "dist"
+        build_id = build.build_identity()["build_id"]
         self.assertFalse(list(out.glob("*factory*")))
-        self.assertTrue((out / "feeds.buildinfo").exists())
-        with tarfile.open(out / "Packages.tar.gz") as archive:
+        self.assertTrue((out / f"{build_id}-feeds.buildinfo").exists())
+        self.assertTrue(all(path.name.startswith(build_id) for path in out.iterdir()))
+        with tarfile.open(out / f"{build_id}-packages.tar.gz") as archive:
             names = archive.getnames()
         self.assertEqual(len(names), 2 + len(build.requested_modules()))
         self.assertTrue(any("/targets/" in "/" + name for name in names))
-        with tarfile.open(out / "Provenance.tar.gz") as archive:
+        self.assertIn("packages/aarch64_cortex-a53/base/samba4-server-1.apk", names)
+        with tarfile.open(out / f"{build_id}-provenance.tar.gz") as archive:
             self.assertIn("provenance/kernel.config", archive.getnames())
             self.assertIn("provenance/kernel-audit.json", archive.getnames())
-        for line in (out / "SHA256SUMS").read_text().splitlines():
+        checksums = (out / f"{build_id}-sha256sums.txt").read_text().splitlines()
+        self.assertEqual(len(checksums), len(list(out.iterdir())) - 1)
+        for line in checksums:
             digest, filename = line.split("  ")
             self.assertEqual(digest, hashlib.sha256((out / filename).read_bytes()).hexdigest())
+        metadata = json.loads((out / f"{build_id}-build.json").read_text())
+        self.assertEqual(metadata["build_id"], build_id)
+        original = self.root / build.TARGET / metadata["original_firmware"]
+        self.assertEqual((out / metadata["files"]["firmware"]).read_bytes(), original.read_bytes())
+        self.assertTrue(all((out / name).is_file() for name in metadata["files"].values()))
+
+    def test_bundle_writes_workflow_summary(self):
+        self.make_outputs()
+        summary = self.root / "summary.md"
+        with patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}):
+            build.bundle(self.root)
+        text = summary.read_text()
+        self.assertIn(build.build_identity()["build_id"], text)
+        self.assertIn("sha256sum --check", text)
+        self.assertIn("Not validated for flashing", text)
 
     def test_bundle_requires_matching_modules(self):
         target = self.make_outputs()

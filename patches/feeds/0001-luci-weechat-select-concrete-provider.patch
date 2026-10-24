@@ -1,0 +1,19 @@
+From: AX5 build maintainers
+Subject: [PATCH] luci-app-weechat: select the default concrete WeeChat variant
+
+The locked packages feed provides weechat via minimal and full variants.
+Selecting the virtual name adds a dependency on the conflicting full variant,
+creating a recursive Kconfig dependency even when the application is disabled.
+Select the default headless provider explicitly instead.
+
+--- a/applications/luci-app-weechat/Makefile
++++ b/applications/luci-app-weechat/Makefile
+@@ -3,7 +3,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ LUCI_TITLE:=LuCI support for WeeChat IRC client
+-LUCI_DEPENDS:=+luci-base +weechat +rpcd-mod-ucode
++LUCI_DEPENDS:=+luci-base +weechat-minimal +rpcd-mod-ucode
+ 
+ PKG_LICENSE:=Apache-2.0
+ PKG_MAINTAINER:=Josef Schlehofer <pepe.schlehofer@gmail.com>
