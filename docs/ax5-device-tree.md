@@ -90,6 +90,76 @@ ipq6000-ax5-jdcloud.dts
 - 实机当前已有 zram；本仓库待构建配置将明确使用 128 MiB/LZO，
   并非在当前路由器上叠加第二个交换设备。
 
+## 初始化失败后重试 HS200
+
+`patches/kernel/9999-mmc-core-retry-ax5-hs400-init-with-hs200.patch`
+在 `prepare` 中复制到锁定源码的 qualcommax 内核补丁目录，由 OpenWrt
+在准备 Linux 6.12.108 时应用；补丁及 SHA256 进入 provenance。
+内核补丁本身不启用 HS400，默认构建仍使用 4-bit/HS200。
+
+下游 quirk 仅作用于根 compatible 为 `redmi,ax5-jdcloud` 的首次卡枚举：
+
+1. 捕获 HS400 配置下 8-bit/时序选择的返回错误、普通 HS400 切换、
+   8-bit HS400 路径的前置调谐，或 HS400ES 选择/调谐错误。
+   对该板的首次 HS400ES 选择，保留原始错误，不让 `-EBADMSG` 被旧逻辑吞掉。
+2. 仅当卡/主机具备 HS200 路径时尝试恢复；纯 HS200 调谐错误不重复尝试。
+3. 原错误路径先释放尚未注册的卡对象，然后清除该 host 的 8-bit、HS400 和
+   HS400ES 能力，通过 `mmc_power_cycle()` 重置主机 I/O 状态并尝试电源循环。
+4. 重新执行完整卡枚举一次。保留 HS200 能力，由正常协商选择 HS200；
+   既有核心逻辑也可能降为更低模式，不保证最终一定为 HS200。
+5. 第二次失败直接返回该次错误，不循环重试。8-bit/HS400 能力在此次 host 生命周期内
+   保持禁用，正常重新开机后重新从设备树获得能力。
+
+不处理其他初始化错误、已注册卡的休眠恢复/运行中复位，也不处理运行中 I/O 错误、
+静默损坏或控制器卡死。其他板保持原有选择/错误处理。
+固定供电的板上，`mmc_power_cycle()` **不保证真正切断 eMMC 电源**；
+不能将该补丁视作无损回退或替代串口、RAM 启动及外部数据备份。
+默认 HS200 设备树不允许 HS400，正常使用不会触发这个分支。
+
+`tests/test_mmc_fallback.py` 将补丁应用到 Linux 6.12.108 代码摘录，
+使用 `cc -std=c11 -Wall -Wextra -Werror` 编译并执行 16 个故障注入场景，
+覆盖正常路径、普通/ES 失败、重试失败、纯 HS200、其他板、恢复及无 HS200 等边界。
+硬件操作由桩函数替代；这些测试只能验证控制流，不证明真实调谐、供电或完整内核编译。
+
+## 可选 HS400 实验构建
+
+手动构建输入 `emmc_mode` 默认为 `hs200`。显式选 `hs400` 才叠加
+`patches/source/0002-ax5-jdcloud-experimental-hs400.patch`：
+
+- 声明 8-bit 总线及 `mmc-hs400-1_8v`，保留 HS200 和现有 192 MHz 最大时钟。
+- 不启用 enhanced strobe，避免同时增加更多实验变量。
+- 允许内核在能力协商和调谐通过后实际尝试 HS400；设备树声明不证明 PCB 支持。
+- 初始化返回错误时由上述内核补丁重试 4-bit HS200 路径；若协商得到更低模式，
+  以实际 `ios` 为准，不能将“启动成功”当作“HS400 成功”。
+- 构建标识额外包含 `-hs400`，溯源 JSON 记录 `emmc_mode` 及实验补丁 SHA256。
+- HS400 构建仅上传 Artifact，发布 job 明确排除它，不覆盖稳定 Release。
+
+本地操作须在 clone、prepare、configure、bundle 等命令中一致设置
+`AX5_EMMC_MODE=hs400`；工作流通过 job 环境统一传递该值。
+实验镜像仍可能无法启动，**不能仅凭自动回退补丁就直接刷写承载数据的路由器**。
+优先使用独立恢复路径和 RAM 启动环境测试。
+
+## 按需只读遥测
+
+此前只有构建配置/溯源和手动检查记录，没有实机遥测代理或自动上报。
+新增 `scripts/collect-emmc-telemetry.sh`，同时随固件安装为
+`/usr/sbin/ax5-emmc-report`。它不自动执行、不定时采集、不上传。
+
+报告包含设备树请求的总线宽度/时钟/模式、当前主机 caps、实际 `ios`、
+错误计数、EXT_CSD 的 selected bytes（芯片能力、版本、寿命）及相关内核日志。
+它不采集 CID/序列号或原始 vendor EXT_CSD 数据，不挂载 debugfs、不切模式、
+不做写盘测试。接口缺失时标记 unavailable；通常需 root 才能读 debugfs/dmesg。
+
+旧固件无需安装即可临时只读执行：
+
+```sh
+ssh router sh -s < scripts/collect-emmc-telemetry.sh
+```
+
+包含该脚本的新固件上执行 `ax5-emmc-report` 即可。
+检查 `actual_link` 中的实际 HS400/HS200 和位宽，再核对内核错误/回退日志。
+日志可能轮转，无法启动时也没有用户态报告；启动失败仍依赖串口或独立恢复环境。
+
 ## 验证范围
 
 补丁上下文核对、补丁应用测试和构建脚本测试不等于完整 DT 验证。

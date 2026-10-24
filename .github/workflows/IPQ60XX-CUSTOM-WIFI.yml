@@ -1,13 +1,20 @@
 name: AX5 JDCloud - Build firmware
-run-name: AX5 JDCloud - Build ${{ github.run_number }} - ${{ github.ref_name }} - publish=${{ inputs.publish }}
+run-name: AX5 JDCloud - Build ${{ github.run_number }} - ${{ github.ref_name }} - ${{ inputs.emmc_mode }} - publish=${{ inputs.publish }}
 
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish Releases (main branch only; replaces stable assets)
+        description: Publish Releases (main and HS200 only; replaces stable assets)
         type: boolean
         default: false
+      emmc_mode:
+        description: eMMC mode (HS400 is experimental; backup and serial recovery required)
+        type: choice
+        options:
+          - hs200
+          - hs400
+        default: hs200
 
 permissions:
   contents: read
@@ -18,6 +25,7 @@ concurrency:
 
 env:
   OPENWRT_PATH: ${{ github.workspace }}/openwrt
+  AX5_EMMC_MODE: ${{ inputs.emmc_mode || 'hs200' }}
   TZ: Asia/Shanghai
 
 defaults:
@@ -136,7 +144,7 @@ jobs:
 
   publish:
     name: AX5 JDCloud - 发布已校验产物
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish && inputs.emmc_mode != 'hs400'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15

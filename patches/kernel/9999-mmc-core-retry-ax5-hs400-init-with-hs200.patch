@@ -1,0 +1,127 @@
+From: OpenWrt CI maintainers
+Subject: [PATCH] mmc: retry AX5 JDCloud cold enumeration without HS400
+
+Restrict recovery to redmi,ax5-jdcloud, a fresh card enumeration and an
+8-bit/HS400-path failure with HS200 available. Let the failed attempt release
+its unregistered card, disable 8-bit/HS400/HS400ES for this host lifetime, use
+the core power-cycle sequence and enumerate once more. Do not retry
+resume, unrelated errors, or a failed second enumeration.
+
+This does not enable HS400. Fixed board supplies may not actually power
+off the chip; controller hangs and runtime I/O failures are not covered.
+With HS400 disabled the normal core negotiates HS200 or a lower mode.
+
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -1531,7 +1531,7 @@
+ /*
+  * Activate High Speed, HS200 or HS400ES mode if supported.
+  */
+-static int mmc_select_timing(struct mmc_card *card)
++static int mmc_select_timing(struct mmc_card *card, bool hs400_fallback)
+ {
+ 	int err = 0;
+ 
+@@ -1540,6 +1540,9 @@
+ 
+ 	if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400ES) {
+ 		err = mmc_select_hs400es(card);
++		/* Do not hide a partially completed HS400ES switch on this board. */
++		if (err && hs400_fallback)
++			return err;
+ 		goto out;
+ 	}
+ 
+@@ -1593,14 +1596,15 @@
+  * In the case of a resume, "oldcard" will contain the card
+  * we're trying to reinitialise.
+  */
+-static int mmc_init_card(struct mmc_host *host, u32 ocr,
+-	struct mmc_card *oldcard)
++static int __mmc_init_card(struct mmc_host *host, u32 ocr,
++	struct mmc_card *oldcard, bool *hs400_failed)
+ {
+ 	struct mmc_card *card;
+ 	int err;
+ 	u32 cid[4];
+ 	u32 rocr;
+ 
++	*hs400_failed = false;
+ 	WARN_ON(!host->claimed);
+ 
+ 	/* Set correct bus mode for MMC before attempting init */
+@@ -1806,9 +1810,15 @@
+ 	/*
+ 	 * Select timing interface
+ 	 */
+-	err = mmc_select_timing(card);
+-	if (err)
++	err = mmc_select_timing(card,
++		!oldcard && of_machine_is_compatible("redmi,ax5-jdcloud"));
++	if (err) {
++		*hs400_failed = (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS200) &&
++			((card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400ES) ||
++			 ((card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400) &&
++			  (host->caps & MMC_CAP_8_BIT_DATA)));
+ 		goto free_card;
++	}
+ 
+ 	if (mmc_card_hs200(card)) {
+ 		host->doing_init_tune = 1;
+@@ -1819,13 +1829,18 @@
+ 
+ 		host->doing_init_tune = 0;
+ 
+-		if (err)
++		if (err) {
++			*hs400_failed = (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400) &&
++				       host->ios.bus_width == MMC_BUS_WIDTH_8;
+ 			goto free_card;
++		}
+ 	} else if (mmc_card_hs400es(card)) {
+ 		if (host->ops->execute_hs400_tuning) {
+ 			err = host->ops->execute_hs400_tuning(host, card);
+-			if (err)
++			if (err) {
++				*hs400_failed = card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS200;
+ 				goto free_card;
++			}
+ 		}
+ 	} else {
+ 		/* Select the desired bus width optionally */
+@@ -1947,6 +1962,35 @@
+ 	return err;
+ }
+ 
++/*
++ * Cold-enumeration quirk for AX5 JDCloud. A failed HS400 transition can
++ * leave card and host timings out of sync: changing host timing alone is
++ * not recovery. Reset through the core power-cycle path and enumerate a
++ * fresh card once with 8-bit and HS400 disabled for this host lifetime.
++ * A board with fixed supplies may not physically remove card power.
++ */
++static int mmc_init_card(struct mmc_host *host, u32 ocr,
++	struct mmc_card *oldcard)
++{
++	bool hs400_failed;
++	int err;
++
++	err = __mmc_init_card(host, ocr, oldcard, &hs400_failed);
++	if (!err || oldcard || !hs400_failed ||
++	    !(host->caps2 & MMC_CAP2_HS200) ||
++	    !of_machine_is_compatible("redmi,ax5-jdcloud"))
++		return err;
++
++	pr_warn("%s: HS400 initialization failed (%d); power-cycling and retrying without HS400\n",
++		mmc_hostname(host), err);
++	host->caps2 &= ~(MMC_CAP2_HS400 | MMC_CAP2_HS400_ES);
++	host->caps &= ~MMC_CAP_8_BIT_DATA;
++	mmc_power_cycle(host, ocr);
++
++	/* Deliberately call the implementation, not this wrapper: one retry. */
++	return __mmc_init_card(host, ocr, NULL, &hs400_failed);
++}
++
+ static int mmc_can_sleep(struct mmc_card *card)
+ {
+ 	return card->ext_csd.rev >= 3;

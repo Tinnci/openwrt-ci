@@ -8,10 +8,12 @@ on:
       - ".github/workflows/**"
       - "scripts/ax5-build.py"
       - "scripts/customize-ax5.sh"
+      - "scripts/collect-emmc-telemetry.sh"
       - "configs/ax5-build.lock.json"
       - "configs/ipq60xx-custom-wifi.config"
       - "patches/feeds/**"
       - "patches/source/**"
+      - "patches/kernel/**"
       - "tests/**"
   pull_request:
     paths:
@@ -20,6 +22,7 @@ on:
       - "configs/**"
       - "patches/feeds/**"
       - "patches/source/**"
+      - "patches/kernel/**"
       - "tests/**"
   workflow_dispatch:
 
@@ -43,9 +46,11 @@ jobs:
       - name: 02 - 运行单元测试与工作流策略检查
         run: python3 -m unittest discover -s tests -v
       - name: 03 - 检查 Shell 语法
-        run: bash -n scripts/customize-ax5.sh
+        run: |
+          bash -n scripts/customize-ax5.sh
+          sh -n scripts/collect-emmc-telemetry.sh
       - name: 04 - 检查 Shell 静态问题
-        run: shellcheck scripts/customize-ax5.sh
+        run: shellcheck scripts/customize-ax5.sh scripts/collect-emmc-telemetry.sh
 
   config:
     name: AX5 JDCloud - 真实源码配置核验

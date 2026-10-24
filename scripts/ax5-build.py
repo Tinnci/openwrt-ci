@@ -16,8 +16,13 @@ LOCK_PATH = REPO / "configs/ax5-build.lock.json"
 SEED = REPO / "configs/ipq60xx-custom-wifi.config"
 FEED_PATCH = REPO / "patches/feeds/0001-luci-weechat-select-concrete-provider.patch"
 SOURCE_PATCH = REPO / "patches/source/0001-ax5-jdcloud-describe-fixed-emmc-bus.patch"
+KERNEL_PATCH = REPO / "patches/kernel/9999-mmc-core-retry-ax5-hs400-init-with-hs200.patch"
+HS400_PATCH = REPO / "patches/source/0002-ax5-jdcloud-experimental-hs400.patch"
 DEVICE = "redmi_ax5-jdcloud"
 TARGET = Path("bin/targets/qualcommax/ipq60xx")
+DTS_PATH = Path(
+    "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-ax5-jdcloud.dts"
+)
 REQUIRED = (
     "luci", "samba4-server", "samba4-admin", "samba4-client", "luci-app-samba4",
     "avahi-dbus-daemon", "wsdd2", "minidlna", "luci-app-minidlna",
@@ -75,7 +80,15 @@ def clone(root):
     subprocess.run(["git", "-C", str(root), "checkout", "--detach", "FETCH_HEAD"], check=True)
 
 
+def emmc_mode():
+    mode = os.environ.get("AX5_EMMC_MODE", "hs200")
+    if mode not in ("hs200", "hs400"):
+        raise ValueError("AX5_EMMC_MODE must be hs200 or hs400")
+    return mode
+
+
 def prepare(root):
+    mode = emmc_mode()
     lock = load_lock()
     if git(root, "rev-parse", "HEAD") != lock["source"]["commit"]:
         raise ValueError("Source HEAD does not match lock file")
@@ -83,10 +96,18 @@ def prepare(root):
         raise ValueError("feeds.conf would override the locked feeds")
     if (root / ".config").exists():
         raise ValueError("Prepare requires no .config: feeds update would silently rewrite it")
+    kernel_patch = root / "target/linux/qualcommax/patches-6.12" / KERNEL_PATCH.name
+    if kernel_patch.exists():
+        raise ValueError("Kernel fallback patch already exists; prepare requires fresh source")
     # Only patch the JDCloud board, not the shared Xiaomi hardware description.
     command = ["git", "-C", str(root), "apply"]
     subprocess.run([*command, "--check", str(SOURCE_PATCH)], check=True)
     subprocess.run([*command, str(SOURCE_PATCH)], check=True)
+    if mode == "hs400":
+        subprocess.run([*command, "--check", str(HS400_PATCH)], check=True)
+        subprocess.run([*command, str(HS400_PATCH)], check=True)
+    kernel_patch.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(KERNEL_PATCH, kernel_patch)
     # ^commit is the OpenWrt feeds script's immutable revision syntax.
     (root / "feeds.conf.default").write_text("".join(
         f"src-git {feed['name']} {feed['url']}^{feed['commit']}\n"
@@ -141,11 +162,13 @@ def build_identity():
     run = f"r{run_id}-a{attempt}" if run_id else "local"
     build_id = (
         f"libwrt-ax5-jdcloud-k{source['kernel']}"
+        f"{'-hs400' if emmc_mode() == 'hs400' else ''}"
         f"-s{source['commit'][:12]}-c{ci_commit[:12]}-{run}"
     )
     return {
         "build_id": build_id,
         "kernel": source["kernel"],
+        "emmc_mode": emmc_mode(),
         "firmware_artifact": f"{build_id}-firmware",
         "diagnostics_artifact": f"{build_id}-diagnostics",
         "config_artifact": f"{build_id}-config",
@@ -165,6 +188,15 @@ def identity():
 def verify(root):
     lock = load_lock()
     verify_revisions(root)
+    # Refuse to label one device-tree profile as another in provenance/artifacts.
+    dts = (root / DTS_PATH).read_text()
+    sdhc = re.search(r"&sdhc\s*\{(.*?)\};", dts, re.S)
+    node = sdhc[1] if sdhc else ""
+    width = re.search(r"\bbus-width\s*=\s*<(\d+)>\s*;", node)
+    hs400 = bool(re.search(r"(?m)^\s*mmc-hs400-1_8v\s*;", node))
+    experimental = emmc_mode() == "hs400"
+    if not width or width[1] != ("8" if experimental else "4") or hs400 != experimental:
+        raise ValueError("eMMC device tree does not match AX5_EMMC_MODE")
     config = config_values((root / ".config").read_text())
     # Kconfig silently drops unavailable symbols. Check every requested boolean,
     # not just the small set of packages required for artifact validation.
@@ -203,6 +235,9 @@ def snapshot(root):
     shutil.copyfile(LOCK_PATH, out / LOCK_PATH.name)
     shutil.copyfile(FEED_PATCH, out / FEED_PATCH.name)
     shutil.copyfile(SOURCE_PATCH, out / SOURCE_PATCH.name)
+    shutil.copyfile(KERNEL_PATCH, out / KERNEL_PATCH.name)
+    if emmc_mode() == "hs400":
+        shutil.copyfile(HS400_PATCH, out / HS400_PATCH.name)
     subprocess.run(
         ["bash", "-c", "./scripts/diffconfig.sh > provenance/diffconfig"],
         cwd=root, check=True,
@@ -212,6 +247,11 @@ def snapshot(root):
         "feed_patches": {FEED_PATCH.name: hashlib.sha256(FEED_PATCH.read_bytes()).hexdigest()},
         "source_patches": {
             SOURCE_PATCH.name: hashlib.sha256(SOURCE_PATCH.read_bytes()).hexdigest(),
+            **({HS400_PATCH.name: hashlib.sha256(HS400_PATCH.read_bytes()).hexdigest()}
+               if emmc_mode() == "hs400" else {}),
+        },
+        "kernel_patches": {
+            KERNEL_PATCH.name: hashlib.sha256(KERNEL_PATCH.read_bytes()).hexdigest(),
         },
         "source": git(root, "rev-parse", "HEAD"),
         "ci_commit": git(REPO, "rev-parse", "HEAD"),

@@ -84,6 +84,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(text.count("contents: write"), 1)
         self.assertNotIn("contents: write", text.split("\n  publish:", 1)[0])
         self.assertIn('run: sha256sum --check "$BUILD_ID-sha256sums.txt"', text)
+        self.assertIn("&& inputs.emmc_mode != 'hs400'", text)
+        self.assertIn("default: hs200", events)
+        self.assertIn("AX5_EMMC_MODE: ${{ inputs.emmc_mode || 'hs200' }}", text)
 
     def test_artifact_names_flow_from_shared_identity(self):
         text = self.workflows[BUILD]
@@ -127,6 +130,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertNotIn("\n          make defconfig", text)
         self.assertIn('"patches/feeds/**"', self.workflows[CHECK])
         self.assertEqual(self.workflows[CHECK].count('"patches/source/**"'), 2)
+        self.assertEqual(self.workflows[CHECK].count('"patches/kernel/**"'), 2)
 
     def test_compile_logs_and_retry_preserve_failure_status(self):
         block = re.search(

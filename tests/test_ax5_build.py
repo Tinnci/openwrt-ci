@@ -23,7 +23,8 @@ class BuildTests(unittest.TestCase):
         # Fixtures must not write fake firmware metadata to the real CI summary.
         self.env_patch = patch.dict(
             os.environ,
-            {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")},
+            {key: value for key, value in os.environ.items()
+             if not key.startswith("GITHUB_") and key != "AX5_EMMC_MODE"},
             clear=True,
         )
         self.env_patch.start()
@@ -38,7 +39,11 @@ class BuildTests(unittest.TestCase):
         )
         self.dts.parent.mkdir(parents=True)
         self.original_dts = (Path(__file__).parent / "fixtures" / self.dts.name).read_text()
-        self.dts.write_text(self.original_dts)
+        self.prepared_dts = self.original_dts.replace(
+            '&sdhc {\n\tstatus = "okay";\n',
+            '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n',
+        )
+        self.dts.write_text(self.prepared_dts)
         self.config = build.SEED.read_text() + "\nCONFIG_KERNEL_IPQ_MEM_PROFILE=512\n"
         (self.root / ".config").write_text(self.config)
         kernel = self.root / "target/linux/generic/kernel-6.12"
@@ -129,6 +134,7 @@ class BuildTests(unittest.TestCase):
 
     def test_prepare_locks_all_feeds(self):
         (self.root / ".config").unlink()
+        self.dts.write_text(self.original_dts)
         build.prepare(self.root)
         feeds = (self.root / "feeds.conf.default").read_text()
         for feed in self.lock["feeds"]:
@@ -138,6 +144,45 @@ class BuildTests(unittest.TestCase):
             '&sdhc {\n\tstatus = "okay";\n',
             '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n',
         ))
+        kernel_patch = self.root / "target/linux/qualcommax/patches-6.12" / build.KERNEL_PATCH.name
+        self.assertEqual(kernel_patch.read_bytes(), build.KERNEL_PATCH.read_bytes())
+
+    def test_prepare_rejects_existing_kernel_patch(self):
+        (self.root / ".config").unlink()
+        kernel_patch = self.root / "target/linux/qualcommax/patches-6.12" / build.KERNEL_PATCH.name
+        kernel_patch.parent.mkdir(parents=True)
+        kernel_patch.write_text("existing patch\n")
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            build.prepare(self.root)
+        self.assertEqual(self.dts.read_text(), self.prepared_dts)
+        self.assertEqual(kernel_patch.read_text(), "existing patch\n")
+
+    def test_hs400_profile_is_explicit_and_has_distinct_identity(self):
+        stable = build.build_identity()
+        self.assertEqual(stable["emmc_mode"], "hs200")
+        self.assertNotIn("-hs400-", stable["build_id"])
+        (self.root / ".config").unlink()
+        self.dts.write_text(self.original_dts)
+        with patch.dict(os.environ, {"AX5_EMMC_MODE": "hs400"}):
+            build.prepare(self.root)
+            experimental = build.build_identity()
+        self.assertIn("\tbus-width = <8>;", self.dts.read_text())
+        self.assertIn("\tmmc-hs400-1_8v;", self.dts.read_text())
+        self.assertNotIn("/delete-property/ mmc-hs400", self.dts.read_text())
+        self.assertNotIn("mmc-hs400-enhanced-strobe", self.dts.read_text())
+        self.assertEqual(experimental["emmc_mode"], "hs400")
+        self.assertIn("-hs400-", experimental["build_id"])
+        self.assertNotEqual(experimental["firmware_artifact"], stable["firmware_artifact"])
+
+    def test_emmc_profile_rejects_unknown_values(self):
+        with patch.dict(os.environ, {"AX5_EMMC_MODE": "unsafe"}):
+            with self.assertRaisesRegex(ValueError, "AX5_EMMC_MODE"):
+                build.prepare(self.root)
+
+    def test_verify_rejects_mislabeled_emmc_profile(self):
+        with patch.dict(os.environ, {"AX5_EMMC_MODE": "hs400"}):
+            with self.assertRaisesRegex(ValueError, "eMMC device tree"):
+                build.verify(self.root)
 
     def test_prepare_rejects_changed_device_tree_context(self):
         (self.root / ".config").unlink()
@@ -211,6 +256,21 @@ class BuildTests(unittest.TestCase):
                          hashlib.sha256(build.SOURCE_PATCH.read_bytes()).hexdigest())
         self.assertEqual((self.root / "provenance" / build.SOURCE_PATCH.name).read_bytes(),
                          build.SOURCE_PATCH.read_bytes())
+        self.assertEqual(metadata["kernel_patches"][build.KERNEL_PATCH.name],
+                         hashlib.sha256(build.KERNEL_PATCH.read_bytes()).hexdigest())
+        self.assertEqual((self.root / "provenance" / build.KERNEL_PATCH.name).read_bytes(),
+                         build.KERNEL_PATCH.read_bytes())
+        self.assertNotIn(build.HS400_PATCH.name, metadata["source_patches"])
+        subprocess.run(["git", "-C", str(self.root), "apply", str(build.HS400_PATCH)],
+                       check=True)
+        with patch.dict(os.environ, {"AX5_EMMC_MODE": "hs400"}):
+            build.snapshot(self.root)
+        experimental = json.loads((self.root / "provenance/build.json").read_text())
+        self.assertEqual(experimental["emmc_mode"], "hs400")
+        self.assertEqual(experimental["source_patches"][build.HS400_PATCH.name],
+                         hashlib.sha256(build.HS400_PATCH.read_bytes()).hexdigest())
+        self.assertEqual((self.root / "provenance" / build.HS400_PATCH.name).read_bytes(),
+                         build.HS400_PATCH.read_bytes())
 
     def test_prepare_rejects_feed_override(self):
         (self.root / "feeds.conf").touch()
@@ -340,6 +400,10 @@ class BuildTests(unittest.TestCase):
             "commit system",
         ])
         self.assertEqual((self.root / "init.log").read_text(), "enable\n")
+        report = self.root / "files/usr/sbin/ax5-emmc-report"
+        self.assertEqual(report.read_bytes(),
+                         (build.REPO / "scripts/collect-emmc-telemetry.sh").read_bytes())
+        self.assertTrue(report.stat().st_mode & 0o111)
 
     def test_customize_rejects_unknown_layout(self):
         result = subprocess.run(["bash", str(build.REPO / "scripts/customize-ax5.sh")],

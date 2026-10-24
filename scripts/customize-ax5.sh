@@ -43,6 +43,12 @@ exit 0
 EOF
 chmod 755 files/etc/uci-defaults/98-ax5-zram
 
+# Install an on-demand, read-only report; never collect or upload automatically.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+mkdir -p files/usr/sbin
+cp "$script_dir/collect-emmc-telemetry.sh" files/usr/sbin/ax5-emmc-report
+chmod 755 files/usr/sbin/ax5-emmc-report
+
 # Keep DNS-SD on LAN; do not reflect discovery onto other networks.
 mkdir -p files/etc/avahi
 cat > files/etc/avahi/avahi-daemon.conf <<'EOF'
