@@ -3,11 +3,12 @@
 ## 本仓库 AX5 京东云定制构建
 
 入口：Actions → **IPQ60XX-CUSTOM-WIFI** → Run workflow。仅构建 Redmi AX5 JDCloud，
-不再每天重复构建固定版本；其他历史工作流尚未迁移，不作为本机推荐入口。
+不再每天重复构建固定版本；10 个历史工作流已移至 `docs/legacy-workflows/`，
+不再被 GitHub Actions 识别，也不会自动清理历史 Release。
 
 - 源码和全部 feeds 固定在 `configs/ax5-build.lock.json` 的完整提交 SHA。
   当前基线为 LiBwrt/LibWrt `25.12-nss`，内核 `6.12.108`。
-- 默认只上传 Artifact；只有显式勾选 `publish` 才写入 Releases。
+- 默认只上传 Artifact；只有在 `main` 上手动运行并显式勾选 `publish` 才写入 Releases。
   保留 `IPQ60XX-CUSTOM-WIFI` 稳定下载入口，历史标签包含时间、run ID 和重试编号。
   稳定入口的标签不代表其当前附件的源码；以附件中的 provenance 为准。
 - 默认 IP 为 **192.168.3.1**。不注入密码、SSH 密钥、磁盘 UUID 或本机挂载配置。
@@ -22,6 +23,25 @@
   Bonjour 使用 Samba 依赖的 D-Bus 版 Avahi，仅绑定 `br-lan`。
   DLNA/NFS 在首次启动时禁用，需显式配置后启用；不会自动导出磁盘或开放 WAN。
   这也意味着升级后不能假设现有 DLNA/NFS 服务会自动继续运行。
+
+### Fork 的 Actions 启用策略
+
+当前 `.github/workflows/` 仅保留配置检查和手动 AX5 构建，无定时任务：
+
+- 配置检查只对相关路径的 `main` 提交、PR 或手动运行触发；同一分支/PR 的旧检查
+  会取消，不在普通功能分支的每次 push 上重复运行。
+- 所有活动 Action 均固定到完整提交 SHA；更新时应审查对应上游变化。
+- 构建和检查显式设置 `contents: read`，checkout 不保留凭据；仅显式发布的 job
+  获得 `contents: write`，发布前核对下载产物的 SHA256。
+- 检查超时 10/30 分钟，完整构建上限 360 分钟，发布上限 15 分钟。
+  固件 Artifact 保留 14 天，诊断和配置保留 7 天；编译缓存由 GitHub 配额策略管理。
+- 不自动发布、不自动刷机。显式发布仍会替换稳定入口的旧附件，请先确认新构建。
+
+首次启用 fork Actions 前，请在仓库 **Settings → Actions → General** 将默认
+workflow token 权限设为只读，并关闭允许 Actions 创建和批准 PR；这些是 GitHub
+仓库设置，不会随 YAML 自动更改。本次文件修改不代表已启用 Actions。
+然后只运行上述两个 AX5 流程，保持历史流程停用。公开仓库使用标准 Ubuntu 托管
+runner；Artifact/缓存配额与未来的计费策略仍需自行留意，不代表无限免费资源。
 
 ### 内核模块策略
 
