@@ -18,6 +18,7 @@ FEED_PATCH = REPO / "patches/feeds/0001-luci-weechat-select-concrete-provider.pa
 SOURCE_PATCH = REPO / "patches/source/0001-ax5-jdcloud-describe-fixed-emmc-bus.patch"
 KERNEL_PATCH = REPO / "patches/kernel/9999-mmc-core-retry-ax5-hs400-init-with-hs200.patch"
 HS400_PATCH = REPO / "patches/source/0002-ax5-jdcloud-experimental-hs400.patch"
+STORAGE_MODULES = REPO / "configs/ax5-dynamic-storage.mk"
 DEVICE = "redmi_ax5-jdcloud"
 TARGET = Path("bin/targets/qualcommax/ipq60xx")
 DTS_PATH = Path(
@@ -29,7 +30,7 @@ REQUIRED = (
     "nfs-kernel-server", "nfs-utils", "kmod-fs-nfsd", "rpcbind",
     "kmod-qca-nss-ecm", "kmod-qca-nss-drv-bridge-mgr", "kmod-qca-nss-drv-vlan-mgr",
     "block-mount", "openssh-sftp-server",
-    "zram-swap",
+    "zram-swap", "lvm2", "cryptsetup", "veritysetup", "integritysetup", "losetup",
 )
 # Check the real Linux configuration, not just OpenWrt's package selections.
 KERNEL_MODULES = {
@@ -40,8 +41,27 @@ KERNEL_MODULES = {
     "inet-diag": "INET_DIAG", "netlink-diag": "NETLINK_DIAG",
     "sched-cake": "NET_SCH_CAKE", "fs-cifs": "CIFS", "fs-btrfs": "BTRFS_FS",
     "fs-xfs": "XFS_FS", "loop": "BLK_DEV_LOOP", "veth": "VETH",
-    "zram": "ZRAM",
+    "zram": "ZRAM", "dm": "BLK_DEV_DM",
+    "ax5-dynamic-storage": "DM_THIN_PROVISIONING",
 }
+STORAGE_SYMBOLS = {
+    "DM_SNAPSHOT", "DM_THIN_PROVISIONING", "DM_BUFIO", "DM_BIO_PRISON",
+    "DM_PERSISTENT_DATA", "DM_VERITY", "DM_VERITY_FEC", "DM_INTEGRITY",
+    "DM_CRYPT", "DM_MIRROR", "DM_ZERO", "DM_UEVENT",
+}
+
+
+def install_storage_modules(root):
+    """Extend the locked package, including its explicit snapshot/zero overrides."""
+    path = root / "package/kernel/linux/modules/block.mk"
+    text = path.read_text()
+    for symbol in ("DM_SNAPSHOT", "DM_ZERO", "DM_UEVENT"):
+        old = f"CONFIG_{symbol}=n"
+        if text.count(old) != 1:
+            raise ValueError(f"Unexpected locked block.mk override: {symbol}")
+        text = text.replace(old, f"CONFIG_{symbol}")
+    path.write_text(text)
+    shutil.copyfile(STORAGE_MODULES, path.with_name("ax5-dynamic-storage.mk"))
 
 
 def requested_modules():
@@ -134,6 +154,7 @@ def patch_feeds(root):
 
 def configure(root):
     verify_revisions(root)
+    install_storage_modules(root)
     # feeds update refreshes any existing .config before packages are installed.
     # Restore the seed only after feed update, patching and installation are complete.
     shutil.copyfile(SEED, root / ".config")
@@ -236,6 +257,7 @@ def snapshot(root):
     shutil.copyfile(FEED_PATCH, out / FEED_PATCH.name)
     shutil.copyfile(SOURCE_PATCH, out / SOURCE_PATCH.name)
     shutil.copyfile(KERNEL_PATCH, out / KERNEL_PATCH.name)
+    shutil.copyfile(STORAGE_MODULES, out / STORAGE_MODULES.name)
     if emmc_mode() == "hs400":
         shutil.copyfile(HS400_PATCH, out / HS400_PATCH.name)
     subprocess.run(
@@ -244,6 +266,9 @@ def snapshot(root):
     )
     metadata = {
         **build_identity(),
+        "storage_modules": {
+            STORAGE_MODULES.name: hashlib.sha256(STORAGE_MODULES.read_bytes()).hexdigest(),
+        },
         "feed_patches": {FEED_PATCH.name: hashlib.sha256(FEED_PATCH.read_bytes()).hexdigest()},
         "source_patches": {
             SOURCE_PATCH.name: hashlib.sha256(SOURCE_PATCH.read_bytes()).hexdigest(),
@@ -275,6 +300,7 @@ def audit_kernel(root):
     kernel = config_values(configs[0].read_text())
     # NFSv4 kernel support does not by itself configure an NFSv4 userspace export.
     expected = {"CONFIG_MODULES", "CONFIG_MMC", "CONFIG_NFSD_V4"}
+    expected.update(f"CONFIG_{symbol}" for symbol in STORAGE_SYMBOLS)
     expected.update(
         f"CONFIG_{symbol}" for module, symbol in KERNEL_MODULES.items()
         if f"kmod-{module}" in requested_modules()

@@ -33,6 +33,11 @@ class BuildTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.lock = build.load_lock()
+        block = self.root / "package/kernel/linux/modules/block.mk"
+        block.parent.mkdir(parents=True)
+        block.write_text("\n".join(
+            f"CONFIG_{symbol}=n" for symbol in ("DM_SNAPSHOT", "DM_ZERO", "DM_UEVENT")
+        ) + "\n")
         self.dts = self.root / (
             "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/"
             "ipq6000-ax5-jdcloud.dts"
@@ -57,6 +62,7 @@ class BuildTests(unittest.TestCase):
         self.kernel_config.write_text(
             "CONFIG_MODULES=y\nCONFIG_MMC=y\nCONFIG_NFSD_V4=y\n" +
             "CONFIG_SWAP=y\nCONFIG_ZSMALLOC=m\nCONFIG_ZRAM_BACKEND_LZO=y\n" +
+            "".join(f"CONFIG_{symbol}=y\n" for symbol in build.STORAGE_SYMBOLS) +
             "".join(f"CONFIG_{symbol}=m\n" for symbol in build.KERNEL_MODULES.values())
         )
         self.git_patch = patch.object(build, "git", side_effect=self.fake_git)
@@ -341,6 +347,26 @@ class BuildTests(unittest.TestCase):
                 ))
                 with self.assertRaisesRegex(ValueError, package):
                     build.verify(self.root)
+
+    def test_storage_module_install_rejects_changed_overrides(self):
+        build.install_storage_modules(self.root)
+        block = self.root / "package/kernel/linux/modules/block.mk"
+        self.assertNotIn("=n", block.read_text())
+        self.assertEqual(block.with_name(build.STORAGE_MODULES.name).read_bytes(),
+                         build.STORAGE_MODULES.read_bytes())
+        with self.assertRaisesRegex(ValueError, "Unexpected locked"):
+            build.install_storage_modules(self.root)
+
+    def test_kernel_audit_requires_dynamic_storage(self):
+        original = self.kernel_config.read_text()
+        for symbol in build.STORAGE_SYMBOLS:
+            with self.subTest(symbol=symbol):
+                self.kernel_config.write_text("\n".join(
+                    line for line in original.splitlines()
+                    if not line.startswith(f"CONFIG_{symbol}=")
+                ))
+                with self.assertRaisesRegex(ValueError, symbol):
+                    build.audit_kernel(self.root)
 
     def test_kernel_audit_requires_swap_and_zram_support(self):
         original = self.kernel_config.read_text()
