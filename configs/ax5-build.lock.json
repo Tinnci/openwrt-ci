@@ -1,0 +1,17 @@
+{
+  "source": {
+    "url": "https://github.com/LiBwrt/LibWrt.git",
+    "branch": "25.12-nss",
+    "commit": "3a3d0b08595530070ad9cd8a20c0ae4ea3e77f70",
+    "kernel": "6.12.108"
+  },
+  "feeds": [
+    {"name": "nss_packages", "url": "https://github.com/qosmio/nss-packages.git", "commit": "0d970dbf0185e3f53709bd803e8a466598023c57"},
+    {"name": "sqm_scripts_nss", "url": "https://github.com/qosmio/sqm-scripts-nss.git", "commit": "4b4ed8639229be5e70cf94b73cdf7dbc09e66d5d"},
+    {"name": "packages", "url": "https://github.com/immortalwrt/packages.git", "commit": "d200499b31751dc5c72905f37a747712f009f155"},
+    {"name": "luci", "url": "https://github.com/immortalwrt/luci.git", "commit": "61e876e98f91446fd8968dfede721b98ddf80a32"},
+    {"name": "routing", "url": "https://github.com/openwrt/routing.git", "commit": "48c808034414a2112cf9d5261a20a320e8d0d170"},
+    {"name": "telephony", "url": "https://github.com/openwrt/telephony.git", "commit": "2618106d5846a4a542fdf5809f0d3ed228ce439b"},
+    {"name": "video", "url": "https://github.com/openwrt/video.git", "commit": "094bf58da6682f895255a35a84349a79dab4bf95"}
+  ]
+}
