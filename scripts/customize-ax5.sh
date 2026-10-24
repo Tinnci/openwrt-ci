@@ -30,6 +30,19 @@ exit 0
 EOF
 chmod 755 files/etc/uci-defaults/99-ax5-storage-safety
 
+# Configure RAM-only swap; never create a swap file or partition on eMMC.
+cat > files/etc/uci-defaults/98-ax5-zram <<'EOF'
+#!/bin/sh
+set -e
+uci set system.@system[0].zram_size_mb='128'
+uci set system.@system[0].zram_comp_algo='lzo'
+uci set system.@system[0].zram_priority='100'
+uci commit system
+/etc/init.d/zram enable
+exit 0
+EOF
+chmod 755 files/etc/uci-defaults/98-ax5-zram
+
 # Keep DNS-SD on LAN; do not reflect discovery onto other networks.
 mkdir -p files/etc/avahi
 cat > files/etc/avahi/avahi-daemon.conf <<'EOF'

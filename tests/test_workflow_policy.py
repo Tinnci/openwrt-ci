@@ -102,7 +102,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(hashes[0], hashes[1])
         for path in (
             "configs/ax5-build.lock.json", "configs/ipq60xx-custom-wifi.config",
-            "patches/feeds/**", "scripts/customize-ax5.sh",
+            "patches/**", "scripts/customize-ax5.sh",
         ):
             self.assertIn(f"'{path}'", hashes[0])
         self.assertIn("${{ github.run_id }}-${{ github.run_attempt }}", cache)
@@ -126,6 +126,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                                 text.index('ax5-build.py" configure .'))
                 self.assertNotIn("\n          make defconfig", text)
         self.assertIn('"patches/feeds/**"', self.workflows[CHECK])
+        self.assertEqual(self.workflows[CHECK].count('"patches/source/**"'), 2)
 
     def test_compile_logs_and_retry_preserve_failure_status(self):
         block = re.search(

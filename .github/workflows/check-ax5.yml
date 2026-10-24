@@ -11,6 +11,7 @@ on:
       - "configs/ax5-build.lock.json"
       - "configs/ipq60xx-custom-wifi.config"
       - "patches/feeds/**"
+      - "patches/source/**"
       - "tests/**"
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - "scripts/**"
       - "configs/**"
       - "patches/feeds/**"
+      - "patches/source/**"
       - "tests/**"
   workflow_dispatch:
 

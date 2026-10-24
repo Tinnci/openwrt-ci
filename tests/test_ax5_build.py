@@ -32,6 +32,13 @@ class BuildTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.lock = build.load_lock()
+        self.dts = self.root / (
+            "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/"
+            "ipq6000-ax5-jdcloud.dts"
+        )
+        self.dts.parent.mkdir(parents=True)
+        self.original_dts = (Path(__file__).parent / "fixtures" / self.dts.name).read_text()
+        self.dts.write_text(self.original_dts)
         self.config = build.SEED.read_text() + "\nCONFIG_KERNEL_IPQ_MEM_PROFILE=512\n"
         (self.root / ".config").write_text(self.config)
         kernel = self.root / "target/linux/generic/kernel-6.12"
@@ -44,6 +51,7 @@ class BuildTests(unittest.TestCase):
         self.kernel_config.parent.mkdir(parents=True)
         self.kernel_config.write_text(
             "CONFIG_MODULES=y\nCONFIG_MMC=y\nCONFIG_NFSD_V4=y\n" +
+            "CONFIG_SWAP=y\nCONFIG_ZSMALLOC=m\nCONFIG_ZRAM_BACKEND_LZO=y\n" +
             "".join(f"CONFIG_{symbol}=m\n" for symbol in build.KERNEL_MODULES.values())
         )
         self.git_patch = patch.object(build, "git", side_effect=self.fake_git)
@@ -126,6 +134,19 @@ class BuildTests(unittest.TestCase):
         for feed in self.lock["feeds"]:
             self.assertIn(f"{feed['url']}^{feed['commit']}", feeds)
         self.assertFalse((self.root / ".config").exists())
+        self.assertEqual(self.dts.read_text(), self.original_dts.replace(
+            '&sdhc {\n\tstatus = "okay";\n',
+            '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n',
+        ))
+
+    def test_prepare_rejects_changed_device_tree_context(self):
+        (self.root / ".config").unlink()
+        changed = self.original_dts.replace("mmc-hs200-1_8v", "mmc-hs400-1_8v")
+        self.dts.write_text(changed)
+        with self.assertRaises(subprocess.CalledProcessError):
+            build.prepare(self.root)
+        self.assertEqual(self.dts.read_text(), changed)
+        self.assertFalse((self.root / "feeds.conf.default").exists())
 
     def test_prepare_rejects_early_config(self):
         with self.assertRaisesRegex(ValueError, "silently rewrite"):
@@ -186,6 +207,10 @@ class BuildTests(unittest.TestCase):
                          hashlib.sha256(build.FEED_PATCH.read_bytes()).hexdigest())
         self.assertEqual((self.root / "provenance" / build.FEED_PATCH.name).read_bytes(),
                          build.FEED_PATCH.read_bytes())
+        self.assertEqual(metadata["source_patches"][build.SOURCE_PATCH.name],
+                         hashlib.sha256(build.SOURCE_PATCH.read_bytes()).hexdigest())
+        self.assertEqual((self.root / "provenance" / build.SOURCE_PATCH.name).read_bytes(),
+                         build.SOURCE_PATCH.read_bytes())
 
     def test_prepare_rejects_feed_override(self):
         (self.root / "feeds.conf").touch()
@@ -236,16 +261,37 @@ class BuildTests(unittest.TestCase):
 
     def test_verify_rejects_dropped_optional_module(self):
         (self.root / ".config").write_text(
-            self.config.replace("CONFIG_PACKAGE_kmod-fs-cifs=m\n", "")
+            self.config.replace("CONFIG_PACKAGE_kmod-fs-btrfs=m\n", "")
         )
-        with self.assertRaisesRegex(ValueError, "kmod-fs-cifs"):
+        with self.assertRaisesRegex(ValueError, "kmod-fs-btrfs"):
             build.verify(self.root)
 
     def test_verify_accepts_optional_module_promoted_by_dependency(self):
         (self.root / ".config").write_text(
-            self.config.replace("CONFIG_PACKAGE_kmod-fs-cifs=m", "CONFIG_PACKAGE_kmod-fs-cifs=y")
+            self.config.replace("CONFIG_PACKAGE_kmod-fs-btrfs=m", "CONFIG_PACKAGE_kmod-fs-btrfs=y")
         )
         build.verify(self.root)
+
+    def test_cifs_and_zram_must_be_preinstalled(self):
+        for package in ("kmod-fs-cifs", "kmod-zram", "zram-swap"):
+            with self.subTest(package=package):
+                self.assertIn(f"CONFIG_PACKAGE_{package}=y\n", self.config)
+                (self.root / ".config").write_text(self.config.replace(
+                    f"CONFIG_PACKAGE_{package}=y", f"CONFIG_PACKAGE_{package}=m"
+                ))
+                with self.assertRaisesRegex(ValueError, package):
+                    build.verify(self.root)
+
+    def test_kernel_audit_requires_swap_and_zram_support(self):
+        original = self.kernel_config.read_text()
+        for symbol in ("SWAP", "ZRAM", "ZSMALLOC", "ZRAM_BACKEND_LZO", "CIFS"):
+            with self.subTest(symbol=symbol):
+                self.kernel_config.write_text("\n".join(
+                    line for line in original.splitlines()
+                    if not line.startswith(f"CONFIG_{symbol}=")
+                ))
+                with self.assertRaisesRegex(ValueError, f"CONFIG_{symbol}"):
+                    build.audit_kernel(self.root)
 
     def test_kernel_audit_rejects_disabled_feature(self):
         self.kernel_config.write_text(
@@ -272,6 +318,28 @@ class BuildTests(unittest.TestCase):
         self.assertTrue(safety.stat().st_mode & 0o111)
         self.assertIn("allow-interfaces=br-lan",
                       (self.root / "files/etc/avahi/avahi-daemon.conf").read_text())
+        zram = self.root / "files/etc/uci-defaults/98-ax5-zram"
+        subprocess.run(["sh", "-n", str(zram)], check=True)
+        self.assertTrue(zram.stat().st_mode & 0o111)
+        # Exercise the generated first-boot script without touching host services.
+        uci = self.root / "uci"
+        uci.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$UCI_LOG"\n')
+        uci.chmod(0o755)
+        init = self.root / "zram-init"
+        init.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$INIT_LOG"\n')
+        init.chmod(0o755)
+        script = zram.read_text().replace("/etc/init.d/zram", str(init))
+        subprocess.run(["sh", "-c", script], check=True, env={
+            **os.environ, "PATH": str(self.root) + os.pathsep + os.environ["PATH"],
+            "UCI_LOG": str(self.root / "uci.log"), "INIT_LOG": str(self.root / "init.log"),
+        })
+        self.assertEqual((self.root / "uci.log").read_text().splitlines(), [
+            "set system.@system[0].zram_size_mb=128",
+            "set system.@system[0].zram_comp_algo=lzo",
+            "set system.@system[0].zram_priority=100",
+            "commit system",
+        ])
+        self.assertEqual((self.root / "init.log").read_text(), "enable\n")
 
     def test_customize_rejects_unknown_layout(self):
         result = subprocess.run(["bash", str(build.REPO / "scripts/customize-ax5.sh")],
@@ -323,8 +391,8 @@ class BuildTests(unittest.TestCase):
 
     def test_bundle_requires_optional_module_apk(self):
         target = self.make_outputs()
-        next((target / "packages").glob("kmod-fs-cifs-*.apk")).unlink()
-        with self.assertRaisesRegex(ValueError, "kmod-fs-cifs APK"):
+        next((target / "packages").glob("kmod-fs-btrfs-*.apk")).unlink()
+        with self.assertRaisesRegex(ValueError, "kmod-fs-btrfs APK"):
             build.bundle(self.root)
 
     def test_bundle_rejects_missing_service_in_image(self):

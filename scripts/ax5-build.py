@@ -15,6 +15,7 @@ REPO = Path(__file__).resolve().parents[1]
 LOCK_PATH = REPO / "configs/ax5-build.lock.json"
 SEED = REPO / "configs/ipq60xx-custom-wifi.config"
 FEED_PATCH = REPO / "patches/feeds/0001-luci-weechat-select-concrete-provider.patch"
+SOURCE_PATCH = REPO / "patches/source/0001-ax5-jdcloud-describe-fixed-emmc-bus.patch"
 DEVICE = "redmi_ax5-jdcloud"
 TARGET = Path("bin/targets/qualcommax/ipq60xx")
 REQUIRED = (
@@ -23,6 +24,7 @@ REQUIRED = (
     "nfs-kernel-server", "nfs-utils", "kmod-fs-nfsd", "rpcbind",
     "kmod-qca-nss-ecm", "kmod-qca-nss-drv-bridge-mgr", "kmod-qca-nss-drv-vlan-mgr",
     "block-mount", "openssh-sftp-server",
+    "zram-swap",
 )
 # Check the real Linux configuration, not just OpenWrt's package selections.
 KERNEL_MODULES = {
@@ -33,6 +35,7 @@ KERNEL_MODULES = {
     "inet-diag": "INET_DIAG", "netlink-diag": "NETLINK_DIAG",
     "sched-cake": "NET_SCH_CAKE", "fs-cifs": "CIFS", "fs-btrfs": "BTRFS_FS",
     "fs-xfs": "XFS_FS", "loop": "BLK_DEV_LOOP", "veth": "VETH",
+    "zram": "ZRAM",
 }
 
 
@@ -80,6 +83,10 @@ def prepare(root):
         raise ValueError("feeds.conf would override the locked feeds")
     if (root / ".config").exists():
         raise ValueError("Prepare requires no .config: feeds update would silently rewrite it")
+    # Only patch the JDCloud board, not the shared Xiaomi hardware description.
+    command = ["git", "-C", str(root), "apply"]
+    subprocess.run([*command, "--check", str(SOURCE_PATCH)], check=True)
+    subprocess.run([*command, str(SOURCE_PATCH)], check=True)
     # ^commit is the OpenWrt feeds script's immutable revision syntax.
     (root / "feeds.conf.default").write_text("".join(
         f"src-git {feed['name']} {feed['url']}^{feed['commit']}\n"
@@ -195,6 +202,7 @@ def snapshot(root):
     shutil.copyfile(root / "feeds.conf.default", out / "feeds.conf")
     shutil.copyfile(LOCK_PATH, out / LOCK_PATH.name)
     shutil.copyfile(FEED_PATCH, out / FEED_PATCH.name)
+    shutil.copyfile(SOURCE_PATCH, out / SOURCE_PATCH.name)
     subprocess.run(
         ["bash", "-c", "./scripts/diffconfig.sh > provenance/diffconfig"],
         cwd=root, check=True,
@@ -202,6 +210,9 @@ def snapshot(root):
     metadata = {
         **build_identity(),
         "feed_patches": {FEED_PATCH.name: hashlib.sha256(FEED_PATCH.read_bytes()).hexdigest()},
+        "source_patches": {
+            SOURCE_PATCH.name: hashlib.sha256(SOURCE_PATCH.read_bytes()).hexdigest(),
+        },
         "source": git(root, "rev-parse", "HEAD"),
         "ci_commit": git(REPO, "rev-parse", "HEAD"),
         "run_url": (
@@ -228,6 +239,8 @@ def audit_kernel(root):
         f"CONFIG_{symbol}" for module, symbol in KERNEL_MODULES.items()
         if f"kmod-{module}" in requested_modules()
     )
+    if "kmod-zram" in requested_modules():
+        expected.update({"CONFIG_SWAP", "CONFIG_ZSMALLOC", "CONFIG_ZRAM_BACKEND_LZO"})
     out = root / "provenance"
     out.mkdir(exist_ok=True)
     shutil.copyfile(configs[0], out / "kernel.config")

@@ -28,7 +28,7 @@
 
 当前 `.github/workflows/` 仅保留配置检查和手动 AX5 构建，无定时任务：
 
-- `prepare` 阶段只锁定 feeds，不提前创建 `.config`；feeds 更新会自动刷新已有配置，
+- `prepare` 阶段应用京东云设备树补丁并锁定 feeds，不提前创建 `.config`；feeds 更新会自动刷新已有配置，
   因此必须在安装完成后由 `configure` 重新写入种子，并运行
   `make defconfig RECURSIVE_DEP_IS_ERROR=1`，再校验全部显式选择。
 - 安装前应用 `patches/feeds/0001-luci-weechat-select-concrete-provider.patch`：
@@ -46,7 +46,7 @@
   获得 `contents: write`，发布前核对下载产物的 SHA256。
 - 检查超时 10/30 分钟，完整构建上限 360 分钟，发布上限 15 分钟。
   固件 Artifact 保留 14 天，诊断和配置保留 7 天；编译缓存由 GitHub 配额策略管理。
-- 编译缓存按锁文件、种子配置、feeds 补丁和定制脚本隔离；每次运行/重试单独保存，
+- 编译缓存按锁文件、种子配置、源码/feeds 补丁和定制脚本隔离；每次运行/重试单独保存，
   恢复时只匹配同组输入。固件 Artifact 不再二次压缩已压缩的固件及归档，
   诊断日志仍使用默认压缩；Artifact 下载后仍是 ZIP 容器。
 - 不自动发布、不自动刷机。显式发布仍会替换稳定入口的旧附件，请先确认新构建。
@@ -65,8 +65,17 @@ runner；Artifact/缓存配额与未来的计费策略仍需自行留意，不�
 
 - 预装：ext4、exFAT、VFAT、NTFS3、FUSE、UTF-8、USB 存储/UAS、NFS 服务端，
   以及 TUN、WireGuard、网络诊断、CAKE；启用支持不等于自动开放 VPN/NFS 服务。
-- 仅编译匹配 APK（`=m`）：CIFS 客户端、Btrfs、XFS、loop、veth。
-  其中 CIFS 是挂载远端 SMB 所用，Samba 共享本机文件不依赖它。
+- CIFS 客户端预装，用于挂载远端 SMB；不自动挂载共享，也不写入远端凭据。
+  Samba 共享本机文件不依赖 CIFS 客户端。
+- 预装 `kmod-zram` 和 `zram-swap`，首次启动设置 128 MiB、LZO、优先级 100，
+  并启用开机服务。这是压缩交换设备的逻辑容量，不是启动即预占 128 MiB 内存；
+  不创建 eMMC 交换文件/分区，不配置磁盘 writeback。
+  首次启动默认脚本会覆盖保留配置中的这三个 zram 参数，之后可通过 UCI 调整；
+  zram 缓解内存压力，但会消耗 CPU，不能替代实际内存。
+- 仅编译匹配 APK（`=m`）：Btrfs、XFS、loop、veth。
+- 京东云专用设备树补丁明确 eMMC 的 4-bit 总线和不可移除属性；
+  保持上游 HS200、192 MHz，不启用 HS400、不超频、不修改保留内存。
+  继承关系、实机只读核对和验证边界见 [设备树分析](docs/ax5-device-tree.md)。
 - 不额外开启 SFE 或修改 NSS/软件流量卸载运行配置；CAKE/SQM 的实际整形效果仍需
   在机器上验证，安装模块不保证 NSS 加速流量经过软件队列。
 - 不执行格式化、挂载或存储迁移；文件系统工具也不会因为安装驱动而自动安装。
