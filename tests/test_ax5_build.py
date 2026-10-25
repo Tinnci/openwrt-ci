@@ -33,6 +33,10 @@ class BuildTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.lock = build.load_lock()
+        info = self.root / "tmp/.packageinfo"
+        info.parent.mkdir(parents=True)
+        deps = build.STORAGE_MODULES.read_text().split("  DEPENDS:=", 1)[1].splitlines()[0]
+        info.write_text("".join(f"Package: {p.removeprefix('+')}\n" for p in deps.split()))
         block = self.root / "package/kernel/linux/modules/block.mk"
         block.parent.mkdir(parents=True)
         block.write_text("\n".join(
@@ -222,6 +226,13 @@ class BuildTests(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError):
                     build.configure(self.root)
         snapshot.assert_not_called()
+
+    def test_storage_dependencies_must_exist_in_real_metadata(self):
+        build.verify_storage_dependencies(self.root)
+        info = self.root / "tmp/.packageinfo"
+        info.write_text(info.read_text().replace("Package: kmod-reed-solomon\n", ""))
+        with self.assertRaisesRegex(ValueError, "kmod-reed-solomon"):
+            build.verify_storage_dependencies(self.root)
 
     def test_patch_feeds_fixes_the_virtual_dependency(self):
         recipe = self.root / "feeds/luci/applications/luci-app-weechat/Makefile"

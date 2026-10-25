@@ -159,7 +159,76 @@ def configure(root):
     # Restore the seed only after feed update, patching and installation are complete.
     shutil.copyfile(SEED, root / ".config")
     subprocess.run(["make", "defconfig", "RECURSIVE_DEP_IS_ERROR=1"], cwd=root, check=True)
+    verify_storage_dependencies(root)
     snapshot(root)
+
+
+def verify_storage_dependencies(root):
+    available = set(re.findall(
+        r"(?m)^Package: (\S+)$", (root / "tmp/.packageinfo").read_text()
+    ))
+    dependencies = re.search(r"(?m)^  DEPENDS:=(.*)$", STORAGE_MODULES.read_text())[1]
+    required = {item.removeprefix("+") for item in dependencies.split()}
+    missing = sorted(required - available)
+    if missing:
+        raise ValueError("Unknown dynamic-storage dependencies: " + ", ".join(missing))
+
+
+def kernel_preflight(root):
+    """Resolve actual patched Linux Kconfig before downloading/building all packages.
+
+    Uses the distro ARM64 compiler for configuration only. The final build still
+    uses the locked OpenWrt toolchain and is audited independently.
+    """
+    subprocess.run(["make", "target/linux/prepare", "V=s"], cwd=root,
+                   stdin=subprocess.DEVNULL, check=True)
+    version = load_lock()["source"]["kernel"]
+    kernels = list(root.glob(
+        f"build_dir/target-*/linux-qualcommax_ipq60xx/linux-{version}"
+    ))
+    if len(kernels) != 1:
+        raise ValueError("Expected exactly one prepared Linux source tree")
+    out = root / "provenance"
+    out.mkdir(exist_ok=True)
+    target = subprocess.check_output([
+        "perl", str(root / "scripts/kconfig.pl"), "+", "+",
+        str(root / "target/linux/generic/config-6.12"),
+        str(root / "target/linux/qualcommax/config-6.12"),
+        str(root / "target/linux/qualcommax/ipq60xx/config-default"),
+    ], text=True)
+    target += "".join(
+        line.replace("CONFIG_KERNEL_", "CONFIG_", 1) + "\n"
+        for line in (root / ".config").read_text().splitlines()
+        if re.match(r"^(# )?CONFIG_KERNEL_", line)
+    )
+    base = out / "kernel-preflight.target"
+    base.write_text(target + "\n# CONFIG_KALLSYMS_EXTRA_PASS is not set\n"
+                    "# CONFIG_KALLSYMS_ALL is not set\nCONFIG_KALLSYMS_UNCOMPRESSED=y\n")
+    override = out / "kernel-preflight.override"
+    override.write_text(subprocess.check_output([
+        "perl", str(root / "scripts/package-metadata.pl"), "kconfig",
+        str(root / "tmp/.packageinfo"), str(root / ".config"), "6.12",
+    ], text=True))
+    config = out / "kernel-preflight.config"
+    merged = subprocess.check_output([
+        "perl", str(root / "scripts/kconfig.pl"), "m+", "+",
+        str(base), "/dev/null", str(override),
+    ], text=True)
+    config.write_text("\n".join(
+        line for line in merged.splitlines() if "INITRAMFS" not in line
+    ) + '\nCONFIG_INITRAMFS_SOURCE=""\n# CONFIG_INITRAMFS_FORCE is not set\n'
+        '# CONFIG_INITRAMFS_PRESERVE_MTIME is not set\n')
+    command = ["make", "-C", str(kernels[0]), f"O={root / 'build_dir/kernel-preflight'}",
+               "ARCH=arm64", "LLVM=1", "CC=clang", "LD=ld.lld",
+               f"KCONFIG_CONFIG={config}"]
+    new = subprocess.check_output([*command, "listnewconfig"], text=True,
+                                  stdin=subprocess.DEVNULL)
+    (out / "kernel-preflight.new-symbols").write_text(new)
+    symbols = re.findall(r"(?m)^CONFIG_[A-Z0-9_]+", new)
+    if symbols:
+        raise ValueError("Unspecified Linux Kconfig options: " + ", ".join(symbols))
+    subprocess.run([*command, "olddefconfig"], stdin=subprocess.DEVNULL, check=True)
+    audit_kernel(root, config, "kernel-preflight")
 
 
 def config_values(text):
@@ -290,9 +359,9 @@ def snapshot(root):
     (out / "build.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
 
-def audit_kernel(root):
+def audit_kernel(root, config_path=None, prefix="kernel"):
     version = load_lock()["source"]["kernel"]
-    configs = list(root.glob(
+    configs = [config_path] if config_path is not None else list(root.glob(
         f"build_dir/target-*/linux-qualcommax_ipq60xx/linux-{version}/.config"
     ))
     if len(configs) != 1:
@@ -309,9 +378,10 @@ def audit_kernel(root):
         expected.update({"CONFIG_SWAP", "CONFIG_ZSMALLOC", "CONFIG_ZRAM_BACKEND_LZO"})
     out = root / "provenance"
     out.mkdir(exist_ok=True)
-    shutil.copyfile(configs[0], out / "kernel.config")
+    if configs[0] != out / f"{prefix}.config":
+        shutil.copyfile(configs[0], out / f"{prefix}.config")
     report = {key: kernel.get(key, "n") for key in sorted(expected)}
-    (out / "kernel-audit.json").write_text(json.dumps({
+    (out / f"{prefix}-audit.json").write_text(json.dumps({
         "kernel": version, "symbols": report, "packages": requested_modules(),
     }, indent=2) + "\n")
     missing = [key for key, value in report.items() if value not in ("y", "m")]
@@ -416,7 +486,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command", choices=(
-            "identity", "clone", "prepare", "patch-feeds", "configure", "verify", "snapshot", "bundle"
+            "identity", "clone", "prepare", "patch-feeds", "configure", "kernel-preflight",
+            "verify", "snapshot", "bundle"
         )
     )
     parser.add_argument("source", type=Path, nargs="?")

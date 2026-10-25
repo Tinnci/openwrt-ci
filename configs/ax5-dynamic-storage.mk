@@ -3,7 +3,7 @@
 define KernelPackage/ax5-dynamic-storage
   SUBMENU:=Block Devices
   TITLE:=AX5 logical partitions, snapshots and verified storage
-  DEPENDS:=+kmod-dm +kmod-lib-crc32c +kmod-lib-reed-solomon +kmod-crypto-sha256 +kmod-crypto-xts +kmod-crypto-aes +kmod-lib-xor
+  DEPENDS:=+kmod-dm +kmod-lib-crc32c +kmod-reed-solomon +kmod-crypto-sha256 +kmod-crypto-xts +kmod-lib-xor
   KCONFIG:= \
 	CONFIG_DM_UEVENT=y \
 	CONFIG_DM_ZERO \
@@ -15,6 +15,21 @@ define KernelPackage/ax5-dynamic-storage
 	CONFIG_DM_VERITY \
 	CONFIG_DM_VERITY_FEC=y \
 	CONFIG_DM_INTEGRITY \
+	CONFIG_DM_DEBUG_BLOCK_MANAGER_LOCKING=n \
+	CONFIG_DM_DEBUG_BLOCK_STACK_TRACING=n \
+	CONFIG_DM_UNSTRIPED=n \
+	CONFIG_DM_CACHE=n \
+	CONFIG_DM_WRITECACHE=n \
+	CONFIG_DM_EBS=n \
+	CONFIG_DM_ERA=n \
+	CONFIG_DM_CLONE=n \
+	CONFIG_DM_RAID=n \
+	CONFIG_DM_DUST=n \
+	CONFIG_DM_FLAKEY=n \
+	CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG=n \
+	CONFIG_DM_SWITCH=n \
+	CONFIG_DM_ZONED=n \
+	CONFIG_DM_VDO=n \
 	CONFIG_BLK_DEV_INTEGRITY=y \
 	CONFIG_ASYNC_CORE \
 	CONFIG_ASYNC_XOR
