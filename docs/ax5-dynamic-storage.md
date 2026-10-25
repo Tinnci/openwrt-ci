@@ -25,3 +25,27 @@ untrusted storage, and test activation policy before deploying.
 RAID, multipath, cache, debug and fault-injection targets are not prerequisites
 for super partitions and are intentionally not enabled by this profile.
 Real super/Virtual A/B integration remains a separate boot and userspace task.
+
+## Configuration preflight
+
+Both the check and full-build workflows prepare the locked, patched Linux
+source before starting the full package download/build. They merge the target
+config and package Kconfig overrides using OpenWrt's own scripts, then run
+Linux `listnewconfig`: any unanswered option fails the check instead of being
+silently defaulted. A resolved `olddefconfig` is audited separately as
+`kernel-preflight.config` / `kernel-preflight-audit.json`.
+
+This configuration-only step uses the runner's ARM64-capable Clang. Its
+Clang-only LTO/CFI/randstruct choices are explicitly disabled to match the
+GCC build profile. It is not a replacement for the final OpenWrt GCC kernel
+build or its independent `kernel.config` audit.
+
+Custom module dependency names are checked against the real generated
+`tmp/.packageinfo`; unknown names fail immediately. AES is built into the
+locked generic Linux configuration (`CONFIG_CRYPTO_AES=y`), not supplied by
+a nonexistent `kmod-crypto-aes`. FEC uses upstream `kmod-reed-solomon`.
+Newly exposed DM debug/unused targets are explicitly disabled.
+
+Checks run on main and experiment-branch pushes as well as pull requests and
+manual dispatch. The full build also executes the preflight inline, so a
+manual full build cannot skip it.

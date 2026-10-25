@@ -89,9 +89,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node.js 24
         with:
           path: openwrt/.ccache
-          key: ax5-ccache-${{ runner.os }}-${{ hashFiles('configs/ax5-build.lock.json', 'configs/ipq60xx-custom-wifi.config', 'patches/**', 'scripts/customize-ax5.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ax5-ccache-${{ runner.os }}-${{ hashFiles('configs/ax5-build.lock.json', 'configs/ipq60xx-custom-wifi.config', 'configs/ax5-dynamic-storage.mk', 'patches/**', 'scripts/customize-ax5.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ax5-ccache-${{ runner.os }}-${{ hashFiles('configs/ax5-build.lock.json', 'configs/ipq60xx-custom-wifi.config', 'patches/**', 'scripts/customize-ax5.sh') }}-
+            ax5-ccache-${{ runner.os }}-${{ hashFiles('configs/ax5-build.lock.json', 'configs/ipq60xx-custom-wifi.config', 'configs/ax5-dynamic-storage.mk', 'patches/**', 'scripts/customize-ax5.sh') }}-
 
       - name: 08 - 安装 feeds 并核验配置
         working-directory: openwrt

@@ -234,6 +234,25 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "kmod-reed-solomon"):
             build.verify_storage_dependencies(self.root)
 
+    def test_kernel_preflight_rejects_unanswered_options(self):
+        with patch.object(build.subprocess, "run") as run:
+            with patch.object(build.subprocess, "check_output", side_effect=[
+                "", "", "", "CONFIG_DM_DEBUG_BLOCK_MANAGER_LOCKING=n\n",
+            ]):
+                with self.assertRaisesRegex(ValueError, "DM_DEBUG_BLOCK_MANAGER_LOCKING"):
+                    build.kernel_preflight(self.root)
+        self.assertEqual(run.call_count, 1)  # prepare only, never olddefconfig
+
+    def test_kernel_preflight_audits_separate_configuration(self):
+        with patch.object(build.subprocess, "run") as run:
+            with patch.object(build.subprocess, "check_output", side_effect=[
+                "", "", self.kernel_config.read_text(), "",
+            ]):
+                build.kernel_preflight(self.root)
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue((self.root / "provenance/kernel-preflight-audit.json").exists())
+        self.assertFalse((self.root / "provenance/kernel.config").exists())
+
     def test_patch_feeds_fixes_the_virtual_dependency(self):
         recipe = self.root / "feeds/luci/applications/luci-app-weechat/Makefile"
         recipe.parent.mkdir(parents=True)

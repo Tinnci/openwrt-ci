@@ -47,7 +47,7 @@ KERNEL_MODULES = {
 STORAGE_SYMBOLS = {
     "DM_SNAPSHOT", "DM_THIN_PROVISIONING", "DM_BUFIO", "DM_BIO_PRISON",
     "DM_PERSISTENT_DATA", "DM_VERITY", "DM_VERITY_FEC", "DM_INTEGRITY",
-    "DM_CRYPT", "DM_MIRROR", "DM_ZERO", "DM_UEVENT",
+    "DM_CRYPT", "DM_MIRROR", "DM_ZERO", "DM_UEVENT", "CRYPTO_AES",
 }
 
 
@@ -217,7 +217,11 @@ def kernel_preflight(root):
     config.write_text("\n".join(
         line for line in merged.splitlines() if "INITRAMFS" not in line
     ) + '\nCONFIG_INITRAMFS_SOURCE=""\n# CONFIG_INITRAMFS_FORCE is not set\n'
-        '# CONFIG_INITRAMFS_PRESERVE_MTIME is not set\n')
+        '# CONFIG_INITRAMFS_PRESERVE_MTIME is not set\n'
+        # Clang exposes choices absent with the final GCC toolchain. Match the
+        # non-LTO/non-CFI/non-randstruct profile, without hiding storage options.
+        '# CONFIG_LTO_CLANG_FULL is not set\n# CONFIG_LTO_CLANG_THIN is not set\n'
+        '# CONFIG_CFI_CLANG is not set\n# CONFIG_RANDSTRUCT_FULL is not set\n')
     command = ["make", "-C", str(kernels[0]), f"O={root / 'build_dir/kernel-preflight'}",
                "ARCH=arm64", "LLVM=1", "CC=clang", "LD=ld.lld",
                f"KCONFIG_CONFIG={config}"]

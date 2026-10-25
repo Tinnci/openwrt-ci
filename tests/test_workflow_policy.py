@@ -132,6 +132,17 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.workflows[CHECK].count('"patches/source/**"'), 2)
         self.assertEqual(self.workflows[CHECK].count('"patches/kernel/**"'), 2)
 
+    def test_linux_preflight_runs_before_full_build(self):
+        for name, text in self.workflows.items():
+            with self.subTest(workflow=name):
+                self.assertIn('ax5-build.py" kernel-preflight .', text)
+                self.assertLess(text.index('ax5-build.py" configure .'),
+                                text.index('ax5-build.py" kernel-preflight .'))
+        text = self.workflows[BUILD]
+        self.assertLess(text.index('ax5-build.py" kernel-preflight .'),
+                        text.index('make download -j8'))
+        self.assertIn('"configs/ax5-dynamic-storage.mk"', self.workflows[CHECK])
+
     def test_compile_logs_and_retry_preserve_failure_status(self):
         block = re.search(
             r"(?m)^          set -o pipefail\n(?:          .*\n)+",
