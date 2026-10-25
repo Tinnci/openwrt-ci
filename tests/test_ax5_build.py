@@ -248,10 +248,52 @@ class BuildTests(unittest.TestCase):
             with patch.object(build.subprocess, "check_output", side_effect=[
                 "", "", self.kernel_config.read_text(), "",
             ]):
-                build.kernel_preflight(self.root)
+                with patch.object(build, "verify_storage_module_paths") as paths:
+                    build.kernel_preflight(self.root)
+        paths.assert_called_once()
         self.assertEqual(run.call_count, 2)
         self.assertTrue((self.root / "provenance/kernel-preflight-audit.json").exists())
         self.assertFalse((self.root / "provenance/kernel.config").exists())
+
+    def test_module_path_check_evaluates_nested_kbuild(self):
+        kernel = self.kernel_config.parent
+        makefiles = {
+            "drivers/md": (
+                "obj-$(CONFIG_DM_ZERO) += dm-zero.o\n"
+                "obj-$(CONFIG_DM_SNAPSHOT) += dm-snapshot.o\n"
+                "obj-$(CONFIG_DM_BUFIO) += dm-bufio.o\n"
+                "obj-$(CONFIG_DM_BIO_PRISON) += dm-bio-prison.o\n"
+                "obj-$(CONFIG_DM_PERSISTENT_DATA) += persistent-data/\n"
+                "obj-$(CONFIG_DM_THIN_PROVISIONING) += dm-thin-pool.o\n"
+                "obj-$(CONFIG_DM_VERITY) += dm-verity.o\n"
+                "obj-$(CONFIG_DM_INTEGRITY) += dm-integrity.o\n"
+            ),
+            "drivers/md/persistent-data": (
+                "obj-$(CONFIG_DM_PERSISTENT_DATA) += dm-persistent-data.o\n"
+            ),
+            "crypto/async_tx": (
+                "obj-$(CONFIG_ASYNC_CORE) += async_tx.o\n"
+                "obj-$(CONFIG_ASYNC_XOR) += async_xor.o\n"
+            ),
+        }
+        for name, contents in makefiles.items():
+            directory = kernel / name
+            directory.mkdir(parents=True)
+            (directory / "Makefile").write_text(contents)
+        config = self.root / "module-test.config"
+        config.write_text(self.kernel_config.read_text() +
+                          "\nCONFIG_ASYNC_CORE=m\nCONFIG_ASYNC_XOR=m\n")
+        report = self.root / "module-paths.json"
+        build.verify_storage_module_paths(kernel, config, report)
+        self.assertEqual(json.loads(report.read_text())["missing"], [])
+        broken = self.root / "broken-storage.mk"
+        broken.write_text(build.STORAGE_MODULES.read_text().replace(
+            "drivers/md/persistent-data/dm-persistent-data.ko",
+            "drivers/md/dm-persistent-data.ko",
+        ))
+        with patch.object(build, "STORAGE_MODULES", broken):
+            with self.assertRaisesRegex(ValueError, "drivers/md/dm-persistent-data.ko"):
+                build.verify_storage_module_paths(kernel, config, report)
 
     def test_patch_feeds_fixes_the_virtual_dependency(self):
         recipe = self.root / "feeds/luci/applications/luci-app-weechat/Makefile"

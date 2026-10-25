@@ -38,7 +38,7 @@ define KernelPackage/ax5-dynamic-storage
 	$(LINUX_DIR)/drivers/md/dm-snapshot.ko \
 	$(LINUX_DIR)/drivers/md/dm-bufio.ko \
 	$(LINUX_DIR)/drivers/md/dm-bio-prison.ko \
-	$(LINUX_DIR)/drivers/md/dm-persistent-data.ko \
+	$(LINUX_DIR)/drivers/md/persistent-data/dm-persistent-data.ko \
 	$(LINUX_DIR)/drivers/md/dm-thin-pool.ko \
 	$(LINUX_DIR)/drivers/md/dm-verity.ko \
 	$(LINUX_DIR)/drivers/md/dm-integrity.ko \

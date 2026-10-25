@@ -174,6 +174,41 @@ def verify_storage_dependencies(root):
         raise ValueError("Unknown dynamic-storage dependencies: " + ", ".join(missing))
 
 
+def verify_storage_module_paths(kernel, config, output):
+    """Evaluate the real directory Kbuilds, not a second handwritten path list."""
+    files = re.findall(r"\$\(LINUX_DIR\)/([^\s\\]+\.ko)", STORAGE_MODULES.read_text())
+    if not files or len(files) != len(set(files)):
+        raise ValueError("Dynamic-storage FILES must be nonempty and unique")
+    values = config_values(config.read_text())
+    arguments = [f"{key}={value}" for key, value in values.items()]
+    targets = {}
+    for directory in sorted({str(Path(path).parent) for path in files}):
+        makefile = kernel / directory / "Makefile"
+        if not makefile.is_file():
+            raise ValueError(f"Missing Linux Kbuild directory: {directory}")
+        # Separate make invocations avoid leaking obj-m between directories.
+        script = (
+            f"include {makefile}\n"
+            ".PHONY: ax5-module-paths\n"
+            "ax5-module-paths:\n\t@printf '%s\\n' $(obj-m) $(obj-y)\n"
+        )
+        objects = subprocess.check_output(
+            ["make", "--no-print-directory", "-f", "-", "ax5-module-paths", *arguments],
+            input=script, text=True,
+        ).split()
+        targets[directory] = {
+            str(Path(directory) / (name[:-2] + ".ko"))
+            for name in objects if name.endswith(".o")
+        }
+    missing = [path for path in files if path not in targets[str(Path(path).parent)]]
+    output.write_text(json.dumps({
+        "files": files, "kbuild_targets": {k: sorted(v) for k, v in targets.items()},
+        "missing": missing,
+    }, indent=2) + "\n")
+    if missing:
+        raise ValueError("Packaged module paths absent from Linux Kbuild: " + ", ".join(missing))
+
+
 def kernel_preflight(root):
     """Resolve actual patched Linux Kconfig before downloading/building all packages.
 
@@ -233,6 +268,7 @@ def kernel_preflight(root):
         raise ValueError("Unspecified Linux Kconfig options: " + ", ".join(symbols))
     subprocess.run([*command, "olddefconfig"], stdin=subprocess.DEVNULL, check=True)
     audit_kernel(root, config, "kernel-preflight")
+    verify_storage_module_paths(kernels[0], config, out / "kernel-preflight-module-paths.json")
 
 
 def config_values(text):

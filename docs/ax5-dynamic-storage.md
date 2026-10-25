@@ -49,3 +49,9 @@ Newly exposed DM debug/unused targets are explicitly disabled.
 Checks run on main and experiment-branch pushes as well as pull requests and
 manual dispatch. The full build also executes the preflight inline, so a
 manual full build cannot skip it.
+
+The preflight also evaluates each packaged module's directory Makefile with the
+resolved Linux configuration and rejects paths not present in Kbuild's `obj-m`
+or `obj-y` targets. This catches nested outputs such as
+`drivers/md/persistent-data/dm-persistent-data.ko`. It does not replace compiling
+and packaging the real modules, or checking their symbol dependencies.
