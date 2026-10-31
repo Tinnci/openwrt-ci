@@ -29,6 +29,8 @@ super/Virtual A/B，也不让现有 U-Boot 从 LVM 启动。
 
 保留 ARM Cortex-A53/NSS 12.5/512 MiB 配置，模块与内核同一次构建打包，
 构建前解析完整 Kconfig，构建后独立核验实际 kernel.config。
+启用 PSI，并强制核验 SMP/RPS/XPS 在实际内核中可用。
+保留 schedutil 调频及热保护，不强制 performance 或关闭节能。
 保留 RAM-only zram 128 MiB / LZO，不在 eMMC 上做 swap。
 脏页后台回写阈值 4 MiB、前台阈值 16 MiB，避免大型文件写入占满内存。
 这是候选默认值，需要共享负载下比较吞吐与延迟，尚未证明优于旧值。

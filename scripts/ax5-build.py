@@ -415,7 +415,8 @@ def audit_kernel(root, config_path=None, prefix="kernel"):
         raise ValueError(f"Expected one compiled Linux {version} config, found {len(configs)}")
     kernel = config_values(configs[0].read_text())
     # NFSv4 kernel support does not by itself configure an NFSv4 userspace export.
-    expected = {"CONFIG_MODULES", "CONFIG_MMC", "CONFIG_NFSD_V4"}
+    expected = {"CONFIG_MODULES", "CONFIG_MMC", "CONFIG_NFSD_V4",
+                "CONFIG_PSI", "CONFIG_SMP", "CONFIG_RPS", "CONFIG_XPS"}
     expected.update(f"CONFIG_{symbol}" for symbol in STORAGE_SYMBOLS)
     expected.update(
         f"CONFIG_{symbol}" for module, symbol in KERNEL_MODULES.items()

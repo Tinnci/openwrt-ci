@@ -65,6 +65,7 @@ class BuildTests(unittest.TestCase):
         self.kernel_config.parent.mkdir(parents=True)
         self.kernel_config.write_text(
             "CONFIG_MODULES=y\nCONFIG_MMC=y\nCONFIG_NFSD_V4=y\n" +
+            "CONFIG_PSI=y\nCONFIG_SMP=y\nCONFIG_RPS=y\nCONFIG_XPS=y\n" +
             "CONFIG_SWAP=y\nCONFIG_ZSMALLOC=m\nCONFIG_ZRAM_BACKEND_LZO=y\n" +
             "".join(f"CONFIG_{symbol}=y\n" for symbol in build.STORAGE_SYMBOLS) +
             "".join(f"CONFIG_{symbol}=m\n" for symbol in build.KERNEL_MODULES.values())
