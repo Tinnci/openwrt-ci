@@ -72,13 +72,13 @@ runner；Artifact/缓存配额与未来的计费策略仍需自行留意，不�
   不创建 eMMC 交换文件/分区，不配置磁盘 writeback。
   首次启动默认脚本会覆盖保留配置中的这三个 zram 参数，之后可通过 UCI 调整；
   zram 缓解内存压力，但会消耗 CPU，不能替代实际内存。
-- 仅编译匹配 APK（`=m`）：Btrfs、XFS、loop、veth。
+- 仅编译匹配 APK（`=m`）：Btrfs、XFS、veth；loop 随动态存储功能预装。
 - 默认京东云设备树补丁明确 eMMC 的 4-bit 总线和不可移除属性；
   保持上游 HS200、192 MHz，不启用 HS400、不超频、不修改保留内存。
   继承关系、实机只读核对和验证边界见 [设备树分析](docs/ax5-device-tree.md)。
 - 下游内核补丁为京东云首次枚举增加 HS400 失败后的一次 HS200 路径重试；
-  默认仍使用 HS200；手动构建可选择实验性 `emmc_mode=hs400`，使用 8-bit/HS400
-  设备树，失败重试时清除 8-bit/HS400 能力。HS400 产物有独立名称，禁止发布到 Release。
+  实机已发现 8-bit/HS400 枚举成功后的运行期读取错误，现已禁止该构建，
+  仅允许已验证的 4-bit HS200。历史实验补丁保留用于溯源。
   它不覆盖运行中故障，也不保证板上真正断电或无损恢复，
   不能替代独立恢复手段；实现与测试边界见上述设备树文档。
 - 固件预装按需只读命令 `ax5-emmc-report`，报告实际模式、主机能力、寿命、
@@ -157,7 +157,8 @@ shellcheck scripts/customize-ax5.sh
 - **本固件禁止用于任何商业用途，请务必严格遵守国家互联网使用相关法律规定！**
 
 ## 项目说明 [![](https://img.shields.io/badge/-项目基本介绍-FFFFFF.svg)](#项目说明-)
-- 固件默认管理地址：`192.168.1.1` 默认用户：`root` 默认密码：`password`
+- 当前 AX5 实验构建默认管理地址：`10.77.0.1`，用户 `root`；首次使用请设置密码。
+- 历史通用配置的默认地址及密码不适用于当前 AX5 构建。
 - 源码：[LiBwrt](https://github.com/LiBwrt-op/openwrt-6.x)
 - 源码：[immortalwrt](https://github.com/immortalwrt/immortalwrt)
 - 云编译来源：https://github.com/haiibo/OpenWrt
