@@ -11,7 +11,7 @@
 - 默认只上传 Artifact；只有在 `main` 上手动运行并显式勾选 `publish` 才写入 Releases。
   保留 `IPQ60XX-CUSTOM-WIFI` 稳定下载入口，历史标签与产物统一使用构建标识。
   稳定入口的标签不代表其当前附件的源码；以附件中的 provenance 为准。
-- 默认 IP 为 **192.168.3.1**。不注入密码、SSH 密钥、磁盘 UUID 或本机挂载配置。
+- 默认 IP 为 **10.77.0.1**。不注入密码、SSH 密钥、磁盘 UUID 或本机挂载配置。
   凭据遵循上游默认值，首次使用前自行设置。
 - `scripts/customize-ax5.sh` 替代本工作流原先调用的通用 `diy-script.sh`，
   不拉取未固定版本的额外插件，不修改不存在的 Lean/x86 路径。
@@ -188,3 +188,5 @@ shellcheck scripts/customize-ax5.sh
 <a href="#readme">
 <img src="https://img.shields.io/badge/-返回顶部-FFFFFF.svg" title="返回顶部" align="right"/>
 </a>
+
+当前实验构建默认使用 `10.77.0.1/24`、`ax5.home.arpa`。HS400 构建已因实机运行期 I/O 错误禁用。详见 [本次优化与实测](docs/ax5-home-profile.md)。

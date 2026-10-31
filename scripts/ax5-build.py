@@ -109,6 +109,8 @@ def emmc_mode():
 
 def prepare(root):
     mode = emmc_mode()
+    if mode == "hs400":
+        raise ValueError("HS400 blocked: lab runtime I/O errors; use verified 4-bit HS200")
     lock = load_lock()
     if git(root, "rev-parse", "HEAD") != lock["source"]["commit"]:
         raise ValueError("Source HEAD does not match lock file")
@@ -327,6 +329,11 @@ def verify(root):
     experimental = emmc_mode() == "hs400"
     if not width or width[1] != ("8" if experimental else "4") or hs400 != experimental:
         raise ValueError("eMMC device tree does not match AX5_EMMC_MODE")
+    if not experimental:
+        if not re.search(r"max-frequency\s*=\s*<192000000>", node):
+            raise ValueError("eMMC device tree must cap the verified HS200 clock")
+        if re.search(r"(?m)^\s*mmc-hs400-enhanced-strobe\s*;", node):
+            raise ValueError("eMMC enhanced strobe must remain disabled")
     config = config_values((root / ".config").read_text())
     # Kconfig silently drops unavailable symbols. Check every requested boolean,
     # not just the small set of packages required for artifact validation.
@@ -488,7 +495,7 @@ def bundle(root):
         f"- Build ID: `{build_id}`\n"
         f"- Source: {source['url']} @ `{source['commit']}` ({source['branch']})\n"
         f"- Kernel: {source['kernel']}\n"
-        "- Default LAN address: 192.168.3.1\n"
+        "- Default LAN address: 10.77.0.1/24; DNS: ax5.home.arpa\n"
         "- Configure credentials and storage services before use.\n"
         "- DLNA and NFS are installed but disabled on first boot.\n\n"
         "**Upgrade compatibility from the old mmc_do_upgrade firmware is NOT validated.**\n"

@@ -1,0 +1,172 @@
+{
+  "recorded_date": "2026-11-01",
+  "device": "lab Redmi AX5 JDCloud / RA50",
+  "board": "redmi,ax5-jdcloud",
+  "evidence_scope": "this lab board and tested firmware; not a universal limit for all SLD64G chips",
+  "emmc": {
+    "product": "SLD64G",
+    "ext_csd_revision": 8,
+    "card_type": "0x57",
+    "advertises_hs400_1_8v": true
+  },
+  "validated_working": {
+    "kernel": "6.12.108",
+    "bus_width_bits": 4,
+    "timing": "HS200",
+    "actual_clock_hz": 192000000,
+    "signal_voltage": 1.8,
+    "ci_run": 40102146834,
+    "evidence": [
+      "normal root shell",
+      "all GPT partitions enumerated",
+      "first 1 MiB read successfully",
+      "system overlay and p18 data mounted"
+    ]
+  },
+  "failed_experiment": {
+    "kernel": "6.12.108",
+    "bus_width_bits": 8,
+    "advertised_timing": "HS400",
+    "max_clock_hz": 192000000,
+    "ci_run": 40161840221,
+    "failure": "mmcblk0 sector 0–7 READ I/O errors after card enumeration",
+    "initialization_fallback": "present but not sufficient for post-enumeration I/O failures"
+  },
+  "future_build_recommendation": {
+    "default_bus_width_bits": 4,
+    "default_timing": "HS200",
+    "enable_hs400": false,
+    "enable_hs400_enhanced_strobe": false,
+    "ci_automatically_enforces_this_record": false
+  },
+  "partition_layout": [
+    {
+      "partition": 1,
+      "name": "0:SBL1",
+      "start_sector": 34,
+      "end_sector": 1569,
+      "size_bytes": 786432
+    },
+    {
+      "partition": 2,
+      "name": "0:BOOTCONFIG",
+      "start_sector": 1570,
+      "end_sector": 2081,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 3,
+      "name": "0:BOOTCONFIG1",
+      "start_sector": 2082,
+      "end_sector": 2593,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 4,
+      "name": "0:QSEE",
+      "start_sector": 2594,
+      "end_sector": 6177,
+      "size_bytes": 1835008
+    },
+    {
+      "partition": 5,
+      "name": "0:QSEE_1",
+      "start_sector": 6178,
+      "end_sector": 9761,
+      "size_bytes": 1835008
+    },
+    {
+      "partition": 6,
+      "name": "0:DEVCFG",
+      "start_sector": 9762,
+      "end_sector": 10273,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 7,
+      "name": "0:DEVCFG_1",
+      "start_sector": 10274,
+      "end_sector": 10785,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 8,
+      "name": "0:RPM",
+      "start_sector": 10786,
+      "end_sector": 11297,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 9,
+      "name": "0:RPM_1",
+      "start_sector": 11298,
+      "end_sector": 11809,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 10,
+      "name": "0:CDT",
+      "start_sector": 11810,
+      "end_sector": 12321,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 11,
+      "name": "0:CDT_1",
+      "start_sector": 12322,
+      "end_sector": 12833,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 12,
+      "name": "0:APPSBLENV",
+      "start_sector": 12834,
+      "end_sector": 13345,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 13,
+      "name": "0:APPSBL",
+      "start_sector": 13346,
+      "end_sector": 14625,
+      "size_bytes": 655360
+    },
+    {
+      "partition": 14,
+      "name": "0:APPSBL_1",
+      "start_sector": 14626,
+      "end_sector": 15905,
+      "size_bytes": 655360
+    },
+    {
+      "partition": 15,
+      "name": "0:ART",
+      "start_sector": 15906,
+      "end_sector": 16417,
+      "size_bytes": 262144
+    },
+    {
+      "partition": 16,
+      "name": "0:HLOS",
+      "start_sector": 16418,
+      "end_sector": 28705,
+      "size_bytes": 6291456
+    },
+    {
+      "partition": 17,
+      "name": "rootfs",
+      "start_sector": 28706,
+      "end_sector": 2125857,
+      "size_bytes": 1073741824
+    },
+    {
+      "partition": 18,
+      "name": "(未命名)",
+      "start_sector": 2127872,
+      "end_sector": 119783415,
+      "size_bytes": 60239638528
+    }
+  ],
+  "ci_automatically_enforces_this_record": true,
+  "enforcement": "scripts/ax5-build.py prepare rejects HS400; workflow only offers HS200; verify audits bus width, mode and clock"
+}

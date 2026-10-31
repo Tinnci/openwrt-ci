@@ -1,6 +1,9 @@
 From: OpenWrt CI maintainers
 Subject: [PATCH] arm64: dts: allow opt-in AX5 JDCloud HS400 experiments
 
+Historical profile, blocked by prepare after runtime I/O failures.
+Kept for provenance and reproduction tests.
+
 Apply only after the conservative eMMC patch and only for the explicitly
 selected hs400 build profile. Advertise an 8-bit bus and HS400 at the
 existing 192 MHz maximum clock. Do not enable enhanced strobe or alter
@@ -12,13 +15,12 @@ independent recovery path. This is not the default/release profile.
 
 --- a/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-ax5-jdcloud.dts
 +++ b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-ax5-jdcloud.dts
-@@ -15,10 +15,10 @@
- 
- &sdhc {
+@@ -17,3 +17,3 @@
  	status = "okay";
 -	bus-width = <4>;
 +	bus-width = <8>;
  	non-removable;
+@@ -22,5 +22,5 @@
  
 -	/delete-property/ mmc-hs400-1_8v;
 +	mmc-hs400-1_8v;

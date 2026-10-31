@@ -107,3 +107,17 @@ if messages=$(dmesg 2>/dev/null); then
 else
 	printf 'unavailable (permissions or kernel log interface)\n'
 fi
+
+printf '\n[io_queue]\n'
+for name in scheduler read_ahead_kb nr_requests; do
+ field "$name" "$sysfs/class/block/mmcblk0/queue/$name"
+done
+printf '\n[cpu_irq_distribution]\n'
+grep -E 'CPU|mmc|sdhci|nss|edma' /proc/interrupts || true
+printf '\n[memory_pressure]\n'
+for name in memory io cpu; do
+ if [ -r "/proc/pressure/$name" ]; then
+  printf '%s\n' "$name"
+  cat "/proc/pressure/$name"
+ fi
+done

@@ -9,11 +9,10 @@ on:
         type: boolean
         default: false
       emmc_mode:
-        description: eMMC mode (HS400 is experimental; backup and serial recovery required)
+        description: eMMC mode (4-bit HS200 verified on lab hardware)
         type: choice
         options:
           - hs200
-          - hs400
         default: hs200
 
 permissions:

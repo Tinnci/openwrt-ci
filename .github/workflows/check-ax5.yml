@@ -3,12 +3,13 @@ run-name: AX5 JDCloud - Check ${{ github.run_number }} - ${{ github.head_ref || 
 
 on:
   push:
-    branches: [main, "experiment/**"]
+    branches: [main, "experiment/**", "improve/**"]
     paths:
       - ".github/workflows/**"
       - "scripts/ax5-build.py"
       - "scripts/customize-ax5.sh"
       - "scripts/collect-emmc-telemetry.sh"
+      - "scripts/benchmark-emmc.sh"
       - "configs/ax5-build.lock.json"
       - "configs/ipq60xx-custom-wifi.config"
       - "configs/ax5-dynamic-storage.mk"
@@ -50,8 +51,9 @@ jobs:
         run: |
           bash -n scripts/customize-ax5.sh
           sh -n scripts/collect-emmc-telemetry.sh
+          sh -n scripts/benchmark-emmc.sh
       - name: 04 - 检查 Shell 静态问题
-        run: shellcheck scripts/customize-ax5.sh scripts/collect-emmc-telemetry.sh
+        run: shellcheck scripts/customize-ax5.sh scripts/collect-emmc-telemetry.sh scripts/benchmark-emmc.sh
 
   config:
     name: AX5 JDCloud - 真实源码配置核验

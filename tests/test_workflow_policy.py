@@ -180,7 +180,7 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_checks_limit_duplicate_work(self):
         text = self.workflows[CHECK]
-        self.assertIn('push:\n    branches: [main, "experiment/**"]', text)
+        self.assertIn('push:\n    branches: [main, "experiment/**", "improve/**"]', text)
         self.assertIn('      - ".github/workflows/**"', text)
         self.assertIn("cancel-in-progress: true", text)
         self.assertNotIn("contents: write", text)

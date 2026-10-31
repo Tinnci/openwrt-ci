@@ -50,7 +50,7 @@ class BuildTests(unittest.TestCase):
         self.original_dts = (Path(__file__).parent / "fixtures" / self.dts.name).read_text()
         self.prepared_dts = self.original_dts.replace(
             '&sdhc {\n\tstatus = "okay";\n',
-            '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n',
+            '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n\tmax-frequency = <192000000>;\n\t/delete-property/ mmc-hs400-enhanced-strobe;\n',
         )
         self.dts.write_text(self.prepared_dts)
         self.config = build.SEED.read_text() + "\nCONFIG_KERNEL_IPQ_MEM_PROFILE=512\n"
@@ -152,7 +152,7 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((self.root / ".config").exists())
         self.assertEqual(self.dts.read_text(), self.original_dts.replace(
             '&sdhc {\n\tstatus = "okay";\n',
-            '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n',
+            '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n\tmax-frequency = <192000000>;\n\t/delete-property/ mmc-hs400-enhanced-strobe;\n',
         ))
         kernel_patch = self.root / "target/linux/qualcommax/patches-6.12" / build.KERNEL_PATCH.name
         self.assertEqual(kernel_patch.read_bytes(), build.KERNEL_PATCH.read_bytes())
@@ -167,22 +167,12 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.dts.read_text(), self.prepared_dts)
         self.assertEqual(kernel_patch.read_text(), "existing patch\n")
 
-    def test_hs400_profile_is_explicit_and_has_distinct_identity(self):
-        stable = build.build_identity()
-        self.assertEqual(stable["emmc_mode"], "hs200")
-        self.assertNotIn("-hs400-", stable["build_id"])
-        (self.root / ".config").unlink()
+    def test_hs400_prepare_is_blocked_before_source_changes(self):
         self.dts.write_text(self.original_dts)
         with patch.dict(os.environ, {"AX5_EMMC_MODE": "hs400"}):
-            build.prepare(self.root)
-            experimental = build.build_identity()
-        self.assertIn("\tbus-width = <8>;", self.dts.read_text())
-        self.assertIn("\tmmc-hs400-1_8v;", self.dts.read_text())
-        self.assertNotIn("/delete-property/ mmc-hs400", self.dts.read_text())
-        self.assertNotIn("mmc-hs400-enhanced-strobe", self.dts.read_text())
-        self.assertEqual(experimental["emmc_mode"], "hs400")
-        self.assertIn("-hs400-", experimental["build_id"])
-        self.assertNotEqual(experimental["firmware_artifact"], stable["firmware_artifact"])
+            with self.assertRaisesRegex(ValueError, "HS400 blocked"):
+                build.prepare(self.root)
+        self.assertEqual(self.dts.read_text(), self.original_dts)
 
     def test_emmc_profile_rejects_unknown_values(self):
         with patch.dict(os.environ, {"AX5_EMMC_MODE": "unsafe"}):
@@ -470,7 +460,7 @@ class BuildTests(unittest.TestCase):
         path.write_text("ipaddr=192.168.1.1\n")
         subprocess.run(["bash", str(build.REPO / "scripts/customize-ax5.sh")],
                        cwd=self.root, check=True)
-        self.assertEqual(path.read_text(), "ipaddr=192.168.3.1\n")
+        self.assertEqual(path.read_text(), "ipaddr=10.77.0.1\n")
         safety = self.root / "files/etc/uci-defaults/99-ax5-storage-safety"
         subprocess.run(["sh", "-n", str(safety)], check=True)
         self.assertTrue(safety.stat().st_mode & 0o111)
@@ -498,6 +488,21 @@ class BuildTests(unittest.TestCase):
             "commit system",
         ])
         self.assertEqual((self.root / "init.log").read_text(), "enable\n")
+        home = self.root / "files/etc/uci-defaults/97-ax5-home-network"
+        subprocess.run(["sh", "-n", str(home)], check=True)
+        subprocess.run(["sh", str(home)], check=True, env={
+            **os.environ, "PATH": str(self.root) + os.pathsep + os.environ["PATH"],
+            "UCI_LOG": str(self.root / "home.log"),
+        })
+        changes = (self.root / "home.log").read_text()
+        self.assertIn("domain=home.arpa", changes)
+        self.assertIn("local=/home.arpa/", changes)
+        benchmark = self.root / "files/usr/sbin/ax5-emmc-benchmark"
+        subprocess.run(["sh", "-n", str(benchmark)], check=True)
+        # An arbitrary host directory must be rejected before fio or file creation.
+        result = subprocess.run(["sh", str(benchmark), str(self.root)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(list(self.root.glob(".ax5-bench.*")))
         report = self.root / "files/usr/sbin/ax5-emmc-report"
         self.assertEqual(report.read_bytes(),
                          (build.REPO / "scripts/collect-emmc-telemetry.sh").read_bytes())

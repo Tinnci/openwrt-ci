@@ -12,7 +12,7 @@ path = Path(sys.argv[1])
 text = path.read_text()
 if "192.168.1.1" not in text:
     raise SystemExit("Expected upstream default LAN address not found")
-path.write_text(text.replace("192.168.1.1", "192.168.3.1"))
+path.write_text(text.replace("192.168.1.1", "10.77.0.1"))
 PY
 
 # Do not import this router's users, passwords, UUIDs or share paths.
@@ -48,6 +48,8 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 mkdir -p files/usr/sbin
 cp "$script_dir/collect-emmc-telemetry.sh" files/usr/sbin/ax5-emmc-report
 chmod 755 files/usr/sbin/ax5-emmc-report
+cp "$script_dir/benchmark-emmc.sh" files/usr/sbin/ax5-emmc-benchmark
+chmod 755 files/usr/sbin/ax5-emmc-benchmark
 
 # Keep DNS-SD on LAN; do not reflect discovery onto other networks.
 mkdir -p files/etc/avahi
@@ -64,4 +66,26 @@ publish-hinfo=no
 publish-workstation=yes
 [reflector]
 enable-reflector=no
+EOF
+
+# Home DNS scope is local; never forward home.arpa names upstream.
+cat > files/etc/uci-defaults/97-ax5-home-network <<'EOF'
+#!/bin/sh
+set -e
+uci set system.@system[0].hostname='ax5'
+uci set dhcp.@dnsmasq[0].domain='home.arpa'
+uci set dhcp.@dnsmasq[0].local='/home.arpa/'
+uci set dhcp.@dnsmasq[0].expandhosts='1'
+uci commit system
+uci commit dhcp
+exit 0
+EOF
+chmod 755 files/etc/uci-defaults/97-ax5-home-network
+
+# Preserve upstream NSS/EDMA affinity policy. Do not add irqbalance on top.
+# Bound dirty memory so bulk file writes cannot consume most of a 512 MB board.
+mkdir -p files/etc/sysctl.d
+cat > files/etc/sysctl.d/90-ax5-memory.conf <<'EOF'
+vm.dirty_background_bytes=4194304
+vm.dirty_bytes=16777216
 EOF

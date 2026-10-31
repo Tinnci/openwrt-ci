@@ -3,17 +3,20 @@ Subject: [PATCH] arm64: dts: describe AX5 JDCloud's fixed 4-bit eMMC bus
 
 The JDCloud board uses soldered eMMC. Explicitly describe the 4-bit bus
 observed on the device instead of relying on the SDHCI driver's defaults.
-Keep the existing HS200 mode and inherited maximum clock unchanged.
+Keep HS200, explicitly cap the verified clock at 192 MHz, and remove
+any inherited HS400 enhanced-strobe capability.
 Do not modify the shared Xiaomi DTSI or enable HS400.
 
 --- a/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-ax5-jdcloud.dts
 +++ b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-ax5-jdcloud.dts
-@@ -15,6 +15,8 @@
+@@ -15,6 +15,10 @@
  
  &sdhc {
  	status = "okay";
 +	bus-width = <4>;
 +	non-removable;
++	max-frequency = <192000000>;
++	/delete-property/ mmc-hs400-enhanced-strobe;
  
  	/delete-property/ mmc-hs400-1_8v;
  	mmc-hs200-1_8v;
