@@ -29,7 +29,15 @@
  	--disable-o_direct \
  	--with-default-pid-dir=/var/run \
  	--with-default-dm-run-dir=/var/run \
-@@ -168,3 +172,38 @@
+@@ -133,6 +137,7 @@
+ 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libdevmapper.so* $(1)/usr/lib
+ 	$(INSTALL_DIR) $(1)/usr/lib/pkgconfig
+ 	$(CP) $(PKG_BUILD_DIR)/libdm/libdevmapper.pc $(1)/usr/lib/pkgconfig
++	$(LN) libdevmapper.pc $(1)/usr/lib/pkgconfig/devmapper.pc
+ endef
+ 
+ define Package/libdevmapper/install
+@@ -168,3 +173,38 @@
  $(eval $(call BuildPackage,libdevmapper-selinux))
  $(eval $(call BuildPackage,lvm2))
  $(eval $(call BuildPackage,lvm2-selinux))

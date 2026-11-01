@@ -56,3 +56,21 @@ resolved Linux configuration and rejects paths not present in Kbuild's `obj-m`
 or `obj-y` targets. This catches nested outputs such as
 `drivers/md/persistent-data/dm-persistent-data.ko`. It does not replace compiling
 and packaging the real modules, or checking their symbol dependencies.
+
+## Thin tooling cross-compilation
+
+Build 349 failed because Rust devicemapper-sys requests the pkg-config module
+`devmapper`, while the locked LVM package staged only `libdevmapper.pc`.
+The LVM development-file installation now supplies `devmapper.pc` as a relative
+alias to the same metadata. Both lookup names refer to the target library.
+The thin-tools recipe also passes the target triple and target musl/staging
+headers to bindgen explicitly. A staging-install regression test exercises the
+patched Makefile and the consumer's actual `pkg-config --modversion devmapper`
+lookup.
+
+The repaired 1.3.4-r2 package was built with Rust 1.96.0 and the OpenWrt
+AArch64 musl/GCC 14.3 toolchain. Validation extracted the signed APK, executed
+all six packaged entry points using the target musl loader, restored/dumped
+empty and mapped thin metadata, passed thin_check, and rejected invalid
+metadata. These tests run in the local container; they do not change the lab
+router. Full-image CI and independent artifact verification remain required.

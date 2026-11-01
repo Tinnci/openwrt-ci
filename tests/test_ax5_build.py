@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tarfile
@@ -308,6 +309,39 @@ class BuildTests(unittest.TestCase):
         build.patch_feeds(self.root)
         self.assertIn("+weechat-minimal", recipe.read_text())
         self.assertNotIn("+weechat ", recipe.read_text())
+
+    @unittest.skipUnless(shutil.which("pkg-config"), "pkg-config is required")
+    def test_lvm_staged_development_files_satisfy_rust_pkg_config_lookup(self):
+        package = self.root / "utils/lvm2"
+        package.mkdir(parents=True)
+        recipe = package / "Makefile"
+        recipe.write_text((Path(__file__).parent / "fixtures/lvm2.Makefile").read_text())
+        subprocess.run(["git", "-C", str(self.root), "apply", str(build.DMEVENTD_PATCH)], check=True)
+        install = recipe.read_text().split("define Build/InstallDev\n", 1)[1].split("\nendef", 1)[0]
+        source, staging = self.root / "source", self.root / "staging"
+        (source / "usr/include").mkdir(parents=True)
+        (source / "usr/include/libdevmapper.h").write_text("/* fixture */\n")
+        (source / "usr/lib").mkdir(parents=True)
+        (source / "usr/lib/libdevmapper.so").write_bytes(b"fixture")
+        (source / "libdm").mkdir()
+        (source / "libdm/libdevmapper.pc").write_text(
+            "Name: devmapper\nDescription: device mapper fixture\nVersion: 1.02.207\n"
+        )
+        runner = self.root / "install.mk"
+        runner.write_text(
+            f"PKG_INSTALL_DIR:={source}\nPKG_BUILD_DIR:={source}\n"
+            "INSTALL_DIR:=mkdir -p\nINSTALL_DATA:=cp\nCP:=cp -P\nLN:=ln -sf\n"
+            "define install_dev\n" + install + "\nendef\nall:\n"
+            f"\t$(call install_dev,{staging})\n"
+        )
+        subprocess.run(["make", "-f", str(runner)], check=True, capture_output=True)
+        result = subprocess.run(
+            ["pkg-config", "--modversion", "devmapper"], check=True, text=True,
+            capture_output=True, env={**os.environ, "PKG_CONFIG_PATH": "",
+                                     "PKG_CONFIG_LIBDIR": str(staging / "usr/lib/pkgconfig")},
+        )
+        self.assertEqual(result.stdout.strip(), "1.02.207")
+        self.assertEqual((staging / "usr/include/libdevmapper.h").read_text(), "/* fixture */\n")
 
     def test_patch_feeds_rejects_changed_context(self):
         recipe = self.root / "feeds/luci/applications/luci-app-weechat/Makefile"
