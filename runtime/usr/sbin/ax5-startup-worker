@@ -28,7 +28,7 @@ for elapsed in 0 30 60; do
  [ "$elapsed" = 60 ] || sleep 30
 done
 # Never write to an unmounted /mnt path on the system overlay.
-if ! awk '$1=="/dev/mmcblk0p18" && $2=="/mnt/mmcblk0p18" && $3=="ext4" {ok=1} END {exit !ok}' /proc/mounts; then
+if ! ax5-data-ready; then
  logger -t ax5-startup 'Report retained in /tmp; data partition unavailable'
  exit 0
 fi

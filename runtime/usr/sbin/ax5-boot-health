@@ -23,7 +23,7 @@ printf '\n[local_readiness]\n'
 if awk '$2=="/overlay" && $4 ~ /(^|,)rw(,|$)/ {ok=1} END {exit !ok}' /proc/mounts; then
  echo 'overlay=ready'
 else echo 'overlay=not_ready'; fi
-if awk '$1=="/dev/mmcblk0p18" && $2=="/mnt/mmcblk0p18" && $3=="ext4" {ok=1} END {exit !ok}' /proc/mounts; then
+if ax5-data-ready; then
  echo 'data=mounted'
 else echo 'data=not_mounted'; fi
 host=$(uci -q get system.@system[0].hostname || true)

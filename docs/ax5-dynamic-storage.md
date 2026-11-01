@@ -17,10 +17,11 @@ first-stage init, AVB policy, snapuserd/dm-user or Virtual A/B orchestration.
 It does not make U-Boot understand logical volumes or automatically recover
 from a failed eMMC initialization.
 
-No GPT, filesystem, existing data or boot selection is changed by these
-settings. LVM2 upstream packages include discovery/activation hooks: existing
-LVM metadata on attached disks may therefore be activated. Do not attach
-untrusted storage, and test activation policy before deploying.
+Building this image does not repartition or migrate data. AX5 discovery hooks
+require explicit opt-in. The optional ax5-data service activates only p18 with
+the configured VG UUID; global auto_activate remains disabled. U-Boot, ART,
+HLOS and rootfs remain outside LVM. See ax5-lvm-migration.md for the deployed
+lab layout and recovery requirements.
 
 RAID, multipath, cache, debug and fault-injection targets are not prerequisites
 for super partitions and are intentionally not enabled by this profile.

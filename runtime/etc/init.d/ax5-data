@@ -1,0 +1,23 @@
+#!/bin/sh /etc/rc.common
+# Close watchdog fd3 and the observed rc/procd pipe fd13 in children only.
+# Explicit activation of this machine's data PV only; no global VG scan.
+START=16
+STOP=85
+start() {
+ [ "$(cat /tmp/sysinfo/board_name)" = redmi,ax5-jdcloud ] || return 1
+ [ "$(uci -q get ax5_storage.settings.data_lvm)" = 1 ] || return 0
+ [ "$(cat /sys/class/block/mmcblk0p18/start)" = 2127872 ] || return 1
+ [ "$(cat /sys/class/block/mmcblk0p18/size)" = 117655544 ] || return 1
+ expected=$(uci -q get ax5_storage.settings.data_vg_uuid) || return 1
+ [ -n "$expected" ] || return 1
+ actual=$(lvm pvs --devices /dev/mmcblk0p18 --noheadings -o vg_uuid /dev/mmcblk0p18 3>&- 13>&- | tr -d ' ') || return 1
+ [ "$actual" = "$expected" ] || { logger -t ax5-data 'PV identity mismatch'; return 1; }
+ /etc/init.d/dmeventd start 3>&- 13>&-
+ lvm lvchange --devices /dev/mmcblk0p18 -ay ax5data/data 3>&- 13>&- || return 1
+ lvm lvchange --devices /dev/mmcblk0p18 --monitor y ax5data/pool 3>&- 13>&- || return 1
+}
+stop() {
+ # Do not deactivate underneath mounted data or depend on shutdown ordering.
+ if awk '$2=="/mnt/mmcblk0p18" {ok=1} END {exit !ok}' /proc/mounts; then return 0; fi
+ lvm vgchange --devices /dev/mmcblk0p18 -an ax5data 3>&- 13>&-
+}

@@ -96,6 +96,7 @@ class StartupWorkerTests(unittest.TestCase):
             'sleep': 'exit 0', 'logger': 'exit 0', 'mount': 'exit 0',
             'stat': 'echo 0', 'ax5-boot-health': 'echo safe-health-report',
             'timeout': 'shift; exec "$@"',
+            'ax5-data-ready': 'exit '+('0' if mounted else '1'),
         }.items():
             path = binary / name
             path.write_text('#!/bin/sh\n' + body + '\n')

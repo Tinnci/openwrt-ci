@@ -1,22 +1,12 @@
 From: AX5 build maintainers <build@localhost>
-Subject: [PATCH] lvm2: package dmeventd and thin pool monitoring support
+Subject: [PATCH] lvm2: package verified dmeventd monitoring and early procd startup
 
-Build dmeventd together with the LVM command library, provide the
-device-mapper event library and install the dmeventd plugins
-(thin/snapshot/raid/mirror/vdo) so that thin pool monitoring and
-autoextend work on the AX5 lab build.
+Include versioned event libraries and the actual device-mapper plugin directory.
+Start before explicit data-LV activation; preserve the opt-in VG policy.
 
-The plugin modules are installed into /usr/lib (not /usr/lib/device-mapper)
-because dmeventd resolves them through the normal library search path.
-A procd unit starts dmeventd at boot so pool monitoring survives reboots.
-
-Signed-off-by: AX5 build maintainers <build@localhost>
----
-diff --git a/utils/lvm2/Makefile b/utils/lvm2/Makefile
-index 7f6bdbf..5b39cd9 100644
 --- a/utils/lvm2/Makefile
 +++ b/utils/lvm2/Makefile
-@@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
+@@ -11,7 +11,7 @@
  PKG_NAME:=LVM2
  PKG_VERSION:=2.03.33
  PKG_VERSION_DM:=1.02.207
@@ -25,7 +15,7 @@ index 7f6bdbf..5b39cd9 100644
  
  PKG_SOURCE:=$(PKG_NAME).$(PKG_VERSION).tgz
  PKG_SOURCE_URL:=https://sourceware.org/pub/lvm2 \
-@@ -74,7 +74,7 @@ endef
+@@ -74,7 +74,7 @@
  define Package/lvm2
    $(call Package/lvm2/default)
    VARIANT := normal
@@ -34,7 +24,7 @@ index 7f6bdbf..5b39cd9 100644
  endef
  
  define Package/lvm2-selinux
-@@ -98,6 +98,10 @@ endef
+@@ -98,6 +98,10 @@
  
  
  CONFIGURE_ARGS += \
@@ -45,7 +35,7 @@ index 7f6bdbf..5b39cd9 100644
  	--disable-o_direct \
  	--with-default-pid-dir=/var/run \
  	--with-default-dm-run-dir=/var/run \
-@@ -168,3 +172,36 @@ $(eval $(call BuildPackage,libdevmapper))
+@@ -168,3 +172,38 @@
  $(eval $(call BuildPackage,libdevmapper-selinux))
  $(eval $(call BuildPackage,lvm2))
  $(eval $(call BuildPackage,lvm2-selinux))
@@ -61,6 +51,7 @@ index 7f6bdbf..5b39cd9 100644
 +define Package/lvm2-monitor
 +  $(call Package/lvm2/default)
 +  VARIANT:=normal
++  VERSION:=2.03.33-r4
 +  TITLE:=LVM2 thin pool monitoring daemon and plugins
 +  DEPENDS:=+lvm2 +libdevmapper-event
 +endef
@@ -73,24 +64,22 @@ index 7f6bdbf..5b39cd9 100644
 +define Package/lvm2-monitor/install
 +	$(INSTALL_DIR) $(1)/usr/sbin $(1)/usr/lib
 +	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/dmeventd $(1)/usr/sbin/
-+	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libdevmapper-event-lvm2*.so $(1)/usr/lib/
++	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libdevmapper-event-lvm2*.so* $(1)/usr/lib/
 +	$(CP) $(PKG_INSTALL_DIR)/usr/lib/liblvm2cmd.so* $(1)/usr/lib/
++	$(CP) $(PKG_INSTALL_DIR)/usr/lib/device-mapper $(1)/usr/lib/
 +	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/rc.d
 +	$(INSTALL_BIN) ./files/dmeventd.init $(1)/etc/init.d/dmeventd
-+	$(LN) ../init.d/dmeventd $(1)/etc/rc.d/S95dmeventd
++	$(LN) ../init.d/dmeventd $(1)/etc/rc.d/S12dmeventd
 +endef
 +
 +$(eval $(call BuildPackage,libdevmapper-event))
 +$(eval $(call BuildPackage,lvm2-monitor))
-diff --git a/utils/lvm2/files/dmeventd.init b/utils/lvm2/files/dmeventd.init
-new file mode 100755
-index 0000000..c511db7
 --- /dev/null
 +++ b/utils/lvm2/files/dmeventd.init
 @@ -0,0 +1,12 @@
 +#!/bin/sh /etc/rc.common
 +
-+START=95
++START=12
 +STOP=10
 +USE_PROCD=1
 +

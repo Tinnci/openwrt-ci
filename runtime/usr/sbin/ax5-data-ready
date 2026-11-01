@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+[ "$(cat /tmp/sysinfo/board_name)" = redmi,ax5-jdcloud ]
+source=$(awk '$2=="/mnt/mmcblk0p18" && $3=="ext4" && $4 ~ /(^|,)rw(,|$)/ {print $1}' /proc/mounts)
+[ -n "$source" ]
+[ -b "$source" ]
+# OpenWrt block info indexes /dev/dm-N, while LVM also creates mapper nodes.
+set -- $(stat -Lc '%t %T' "$source")
+node=$(readlink -f "/sys/dev/block/$((0x$1)):$((0x$2))")
+source=/dev/${node##*/}
+uuid=$(uci -q get ax5_storage.settings.data_fs_uuid || uci -q get fstab.@mount[2].uuid)
+[ -n "$uuid" ]
+block info "$source" | grep -Fq "UUID=\"$uuid\""
+case "$source" in
+ /dev/mmcblk0p18) exit 0;;
+ *) [ "$(stat -c '%t:%T' "$source")" = "$(stat -Lc '%t:%T' /dev/ax5data/data)" ]
+    [ "$(lvm pvs --devices /dev/mmcblk0p18 --noheadings -o vg_name /dev/mmcblk0p18 3>&- 13>&- | tr -d ' ')" = ax5data ]
+    [ "$(lvm pvs --devices /dev/mmcblk0p18 --noheadings -o vg_uuid /dev/mmcblk0p18 3>&- 13>&- | tr -d ' ')" = "$(uci -q get ax5_storage.settings.data_vg_uuid)" ];;
+esac

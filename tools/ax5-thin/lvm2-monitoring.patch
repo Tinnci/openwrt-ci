@@ -63,7 +63,7 @@
 +	$(CP) $(PKG_INSTALL_DIR)/usr/lib/device-mapper $(1)/usr/lib/
 +	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/rc.d
 +	$(INSTALL_BIN) ./files/dmeventd.init $(1)/etc/init.d/dmeventd
-+	$(LN) ../init.d/dmeventd $(1)/etc/rc.d/S95dmeventd
++	$(LN) ../init.d/dmeventd $(1)/etc/rc.d/S12dmeventd
 +endef
 +
 +$(eval $(call BuildPackage,libdevmapper-event))
@@ -73,7 +73,7 @@
 @@ -0,0 +1,12 @@
 +#!/bin/sh /etc/rc.common
 +
-+START=95
++START=12
 +STOP=10
 +USE_PROCD=1
 +

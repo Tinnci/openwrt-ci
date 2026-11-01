@@ -8,7 +8,7 @@ for name in "$vg" "$pool"; do
  case "$name" in ''|*[!a-zA-Z0-9_-]*|-*) echo 'Invalid LVM name' >&2; exit 2;; esac
 done
 [ "$(cat /tmp/sysinfo/board_name)" = redmi,ax5-jdcloud ]
-awk '$1=="/dev/mmcblk0p18" && $2=="/mnt/mmcblk0p18" && $3=="ext4" {ok=1} END {exit !ok}' /proc/mounts
+ax5-data-ready
 umask 077
 v=$(printf '%s' "$vg" | sed 's/-/--/g')
 p=$(printf '%s' "$pool" | sed 's/-/--/g')

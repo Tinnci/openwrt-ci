@@ -95,6 +95,7 @@ cp -R "$script_dir/../runtime/." files/
 cat > files/etc/uci-defaults/96-ax5-startup <<'EOF'
 #!/bin/sh
 /etc/init.d/ax5-startup enable
+/etc/init.d/ax5-data enable
 exit 0
 EOF
 chmod 755 files/etc/uci-defaults/96-ax5-startup
