@@ -1,0 +1,63 @@
+#!/bin/sh
+# Select the NEXT boot using the internal overlay, never just the active copy.
+set -eu
+mode=${1:-status}
+case "$mode" in status|internal|lvm) ;; *) echo 'Usage: ax5-extroot-select status|internal|lvm' >&2; exit 2;; esac
+[ "$(cat /tmp/sysinfo/board_name)" = redmi,ax5-jdcloud ]
+[ "$(sha256sum /dev/mmcblk0p15 | cut -d' ' -f1)" = "$(uci -q get ax5_extroot.boot.art_sha256)" ]
+lock=/var/run/ax5-extroot-select.lock
+mkdir "$lock"
+mounted=0
+created=
+base=/tmp/ax5-internal-overlay
+cleanup() {
+ rc=$?; trap - EXIT; set +e
+ [ "$mounted" = 0 ] || umount "$base"
+ [ -z "$created" ] || losetup -d "$created"
+ rmdir "$base" 2>/dev/null
+ rmdir "$lock"
+ exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if awk '$2=="/overlay" && $3=="f2fs" {ok=1} END {exit !ok}' /proc/mounts; then
+ prefix=/overlay/upper
+else
+ offset=$(uci -q get ax5_extroot.boot.internal_offset)
+ case "$offset" in ''|*[!0-9]*) exit 1;; esac
+ [ "$offset" -gt 0 ] && [ "$offset" -lt 1073741824 ]
+ loop=
+ for item in /sys/class/block/loop*/loop; do
+  [ -r "$item/offset" ] || continue
+  if [ "$(cat "$item/offset")" = "$offset" ] && [ "$(cat "$item/backing_file")" = /mmcblk0p17 ]; then
+   name=${item%/loop}; loop=/dev/${name##*/}; break
+  fi
+ done
+ if [ -z "$loop" ]; then
+  created=$(losetup --find --show --offset "$offset" /dev/mmcblk0p17)
+  loop=$created
+ fi
+ block info "$loop" | grep -Fq "UUID=\"$(uci -q get ax5_extroot.boot.internal_uuid)\""
+ mkdir "$base"
+ opts=rw,noatime
+ [ "$mode" != status ] || opts=ro,noatime
+ mount -t f2fs -o "$opts" "$loop" "$base"
+ mounted=1
+ prefix=$base/upper
+fi
+if [ "$mode" != status ]; then
+ [ "$(uci -q -c "$prefix/etc/config" get fstab.@mount[0].target)" = /overlay ]
+ flag=0
+ [ "$mode" != lvm ] || flag=1
+ uci -c "$prefix/etc/config" set ax5_extroot.boot.enabled="$flag"
+ uci -c "$prefix/etc/config" set fstab.@mount[0].enabled="$flag"
+ uci -c "$prefix/etc/config" commit fstab
+fi
+if [ "$mode" != status ]; then
+ uci -c "$prefix/etc/config" commit ax5_extroot
+ sync
+fi
+flag=$(uci -q -c "$prefix/etc/config" get ax5_extroot.boot.enabled)
+printf 'next_boot=%s\n' "$flag"
+awk '$2=="/overlay" {print "active_overlay=" $1 " filesystem=" $3}' /proc/mounts

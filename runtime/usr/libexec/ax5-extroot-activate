@@ -1,0 +1,44 @@
+#!/bin/sh
+# BusyBox ash supports inherited fd13; rc.common consumes service variables.
+# shellcheck disable=SC3023
+# Called only by block extroot while the INTERNAL overlay is at /tmp/overlay.
+set -eu
+prefix=/tmp/overlay/upper
+note() { printf '<6>ax5-extroot: %s\n' "$*" >/dev/kmsg; }
+[ "${PREINIT:-}" = 1 ] || exit 1
+[ "$(cat /tmp/sysinfo/board_name)" = redmi,ax5-jdcloud ] || exit 1
+enabled=$(/sbin/uci -q -c "$prefix/etc/config" get ax5_extroot.boot.enabled)
+expected_art=$(/sbin/uci -q -c "$prefix/etc/config" get ax5_extroot.boot.art_sha256)
+expected_vg=$(/sbin/uci -q -c "$prefix/etc/config" get ax5_extroot.boot.vg_uuid)
+expected_lv=$(/sbin/uci -q -c "$prefix/etc/config" get ax5_extroot.boot.lv_uuid)
+expected_fs=$(/sbin/uci -q -c "$prefix/etc/config" get ax5_extroot.boot.fs_uuid)
+if [ "$enabled" != 1 ]; then
+ note 'disabled; selecting internal overlay'
+ exit 1
+fi
+[ "$(cat /sys/class/block/mmcblk0p18/start)" = 2127872 ]
+[ "$(cat /sys/class/block/mmcblk0p18/size)" = 117655544 ]
+[ "$(sha256sum /dev/mmcblk0p15 | cut -d' ' -f1)" = "$expected_art" ]
+# libfstools loads modules-boot.d before invoking the overlay's block binary.
+[ -d /sys/module/dm_mod ] && grep -q ext4 /proc/filesystems
+export LD_LIBRARY_PATH="$prefix/lib:$prefix/usr/lib:/lib:/usr/lib"
+export LVM_SYSTEM_DIR="$prefix/etc/lvm"
+lvm=$prefix/sbin/lvm
+[ -x "$lvm" ] || lvm=/sbin/lvm
+run() { "$lvm" "$@" 3>&- 5>&- 13>&-; }
+vg=$(run pvs --devices /dev/mmcblk0p18 --noheadings -o vg_uuid /dev/mmcblk0p18 | tr -d ' ')
+[ -n "$vg" ] && [ "$vg" = "$expected_vg" ]
+lv=$(run lvs --devices /dev/mmcblk0p18 --noheadings -o lv_uuid ax5data/overlay | tr -d ' ')
+[ -n "$lv" ] && [ "$lv" = "$expected_lv" ]
+[ "$(run lvs --devices /dev/mmcblk0p18 --noheadings -o segtype ax5data/overlay | tr -d ' ')" = linear ]
+run lvchange --devices /dev/mmcblk0p18 --monitor n -ay ax5data/overlay
+minor=$(run lvs --devices /dev/mmcblk0p18 --noheadings -o lv_kernel_minor ax5data/overlay | tr -d ' ')
+case "$minor" in ''|*[!0-9]*) exit 1;; esac
+major=$(run lvs --devices /dev/mmcblk0p18 --noheadings -o lv_kernel_major ax5data/overlay | tr -d ' ')
+case "$major" in ''|*[!0-9]*) exit 1;; esac
+[ "$(cat "/sys/dev/block/$major:$minor/dev")" = "$major:$minor" ]
+# devtmpfs/udev is not available yet; block info probes only /dev/dm-N.
+[ -b "/dev/dm-$minor" ] || mknod "/dev/dm-$minor" b "$major" "$minor"
+/sbin/block info "/dev/dm-$minor" | grep -Fq "UUID=\"$expected_fs\""
+note 'verified ordinary overlay LV activated'
+printf 'activated\n' >/tmp/ax5-extroot-activated

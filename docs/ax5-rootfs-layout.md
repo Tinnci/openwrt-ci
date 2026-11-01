@@ -1,6 +1,8 @@
 # Root filesystem and APK capacity on the AX5 lab
 
-Observed on 2026-11-01 after the p18 LVM migration:
+Historical measurement on 2026-11-01 after the p18 data migration, before
+the subsequently deployed LVM overlay. See [ax5-extroot.md](ax5-extroot.md)
+for the implemented early boot path and operational/upgrade limits.
 
 | Mount | Filesystem | Capacity / available |
 |---|---|---|
@@ -21,7 +23,7 @@ SquashFS to EROFS alone would not redirect APK writes to p18 or eliminate the
 writable overlay capacity limit. Keep SquashFS until a separate image/upgrade
 compatibility and performance evaluation justifies a change.
 
-## Suggested next layout (not deployed)
+## Selected layout (now deployed on the lab)
 
 Keep GPT and p1-p17 unchanged, retaining the boot chain, 6 MiB HLOS and current
 p17 system/overlay as a recovery path. Within the existing ax5data VG:
@@ -49,14 +51,17 @@ This requires explicit **preinit/extroot integration**, not merely a late
 fstab mount. The current ax5-data START=16 runs after the root overlay has
 already been chosen, so it cannot supply the root overlay during that boot.
 The required DM modules, LVM userspace and dependencies must be accessible
-from the base image early enough, activate only the intended PV/VG/LV, and
-then hand off to the normal mount_root/extroot sequence. Test fallback boot,
+early enough, either in the base image or through the locked fstools internal-
+overlay bootstrap. Activate only the intended PV/VG/LV and then hand off to
+the normal mount_root/extroot sequence. Test fallback boot,
 configuration consistency, missing-LV behavior and sysupgrade before making
 it the default. Keep installed package files and the APK database together;
 do not move only /usr or symlink APK internals into the data directory.
 
-No overlay migration, EROFS conversion or GPT resize is performed by this
-commit. The existing data migration remains independently bootable.
+The lab now uses this ordinary-LV overlay and retains the internal F2FS
+recovery path. No EROFS conversion or GPT resize was performed. The early
+bootstrap is implemented through the locked fstools internal-overlay extroot
+entry point rather than START=16. See ax5-extroot.md for details.
 
 References:
 - https://openwrt.org/docs/guide-user/additional-software/extroot_configuration

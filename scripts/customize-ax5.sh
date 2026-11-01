@@ -90,6 +90,31 @@ vm.dirty_background_bytes=4194304
 vm.dirty_bytes=16777216
 EOF
 
+# Keep firmware upgrades on the internal recovery overlay.
+python3 - <<'PYUPGRADE'
+from pathlib import Path
+p = Path("target/linux/qualcommax/ipq60xx/base-files/lib/upgrade/platform.sh")
+s = p.read_text()
+old = "platform_check_image() {\n\treturn 0;\n}"
+if s.count(old) != 1:
+    raise SystemExit("Unexpected platform image checker; review extroot upgrade guard")
+new = "platform_check_image() {\n\t. /lib/upgrade/ax5-extroot-check.sh\n\tax5_extroot_upgrade_check || return 1\n\treturn 0;\n}"
+p.write_text(s.replace(old, new))
+PYUPGRADE
+
+# Bootstrap an explicitly configured LVM extroot from the internal overlay.
+# The patched block binary retains normal upstream behavior without opt-in.
+mkdir -p package/system/fstools/patches
+cp "$script_dir/../patches/ax5-extroot-block.patch" package/system/fstools/patches/900-ax5-extroot-lvm.patch
+python3 - <<'PYFSTOOLS'
+from pathlib import Path
+p = Path("package/system/fstools/Makefile")
+s = p.read_text()
+if s.count("PKG_RELEASE:=1\n") != 1:
+    raise SystemExit("Unexpected fstools release; review extroot package revision")
+p.write_text(s.replace("PKG_RELEASE:=1\n", "PKG_RELEASE:=3\n"))
+PYFSTOOLS
+
 # Runtime files are reviewed and tested alongside the locked build profile.
 cp -R "$script_dir/../runtime/." files/
 cat > files/etc/uci-defaults/96-ax5-startup <<'EOF'

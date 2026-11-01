@@ -467,6 +467,12 @@ class BuildTests(unittest.TestCase):
         path = self.root / "package/base-files/files/bin/config_generate"
         path.parent.mkdir(parents=True)
         path.write_text("ipaddr=192.168.1.1\n")
+        recipe = self.root / "package/system/fstools/Makefile"
+        recipe.parent.mkdir(parents=True)
+        recipe.write_text("PKG_RELEASE:=1\n")
+        platform = self.root / "target/linux/qualcommax/ipq60xx/base-files/lib/upgrade/platform.sh"
+        platform.parent.mkdir(parents=True, exist_ok=True)
+        platform.write_text("platform_check_image() {\n\treturn 0;\n}\n")
         subprocess.run(["bash", str(build.REPO / "scripts/customize-ax5.sh")],
                        cwd=self.root, check=True)
         self.assertEqual(path.read_text(), "ipaddr=10.77.0.1\n")

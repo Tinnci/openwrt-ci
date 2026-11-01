@@ -1,4 +1,6 @@
 #!/bin/sh /etc/rc.common
+# BusyBox ash supports inherited fd13; rc.common consumes service variables.
+# shellcheck disable=SC3023,SC2034
 # Close watchdog fd3 and the observed rc/procd pipe fd13 in children only.
 # Explicit activation of this machine's data PV only; no global VG scan.
 START=16
@@ -12,6 +14,7 @@ start() {
  [ -n "$expected" ] || return 1
  actual=$(lvm pvs --devices /dev/mmcblk0p18 --noheadings -o vg_uuid /dev/mmcblk0p18 3>&- 13>&- | tr -d ' ') || return 1
  [ "$actual" = "$expected" ] || { logger -t ax5-data 'PV identity mismatch'; return 1; }
+ lvm vgmknodes --devices /dev/mmcblk0p18 ax5data 3>&- 13>&- || return 1
  /etc/init.d/dmeventd start 3>&- 13>&-
  lvm lvchange --devices /dev/mmcblk0p18 -ay ax5data/data 3>&- 13>&- || return 1
  lvm lvchange --devices /dev/mmcblk0p18 --monitor y ax5data/pool 3>&- 13>&- || return 1

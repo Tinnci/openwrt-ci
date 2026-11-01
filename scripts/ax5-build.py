@@ -17,6 +17,7 @@ SEED = REPO / "configs/ipq60xx-custom-wifi.config"
 FEED_PATCH = REPO / "patches/feeds/0001-luci-weechat-select-concrete-provider.patch"
 LVM_PATCH = REPO / "patches/feeds/0002-ax5-lvm-explicit-activation.patch"
 DMEVENTD_PATCH = REPO / "patches/feeds/0003-ax5-lvm-dmeventd.patch"
+EXTROOT_PATCH = REPO / "patches/ax5-extroot-block.patch"
 SOURCE_PATCH = REPO / "patches/source/0001-ax5-jdcloud-describe-fixed-emmc-bus.patch"
 KERNEL_PATCH = REPO / "patches/kernel/9999-mmc-core-retry-ax5-hs400-init-with-hs200.patch"
 HS400_PATCH = REPO / "patches/source/0002-ax5-jdcloud-experimental-hs400.patch"
@@ -388,6 +389,8 @@ def snapshot(root):
     shutil.copyfile(LOCK_PATH, out / LOCK_PATH.name)
     shutil.copyfile(FEED_PATCH, out / FEED_PATCH.name)
     shutil.copyfile(LVM_PATCH, out / LVM_PATCH.name)
+    shutil.copyfile(DMEVENTD_PATCH, out / DMEVENTD_PATCH.name)
+    shutil.copyfile(EXTROOT_PATCH, out / EXTROOT_PATCH.name)
     shutil.copyfile(SOURCE_PATCH, out / SOURCE_PATCH.name)
     shutil.copyfile(KERNEL_PATCH, out / KERNEL_PATCH.name)
     shutil.copyfile(STORAGE_MODULES, out / STORAGE_MODULES.name)
@@ -403,7 +406,8 @@ def snapshot(root):
             STORAGE_MODULES.name: hashlib.sha256(STORAGE_MODULES.read_bytes()).hexdigest(),
         },
         "feed_patches": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                         for p in (FEED_PATCH, LVM_PATCH)},
+                         for p in (FEED_PATCH, LVM_PATCH, DMEVENTD_PATCH)},
+        "package_patches": {EXTROOT_PATCH.name: hashlib.sha256(EXTROOT_PATCH.read_bytes()).hexdigest()},
         "source_patches": {
             SOURCE_PATCH.name: hashlib.sha256(SOURCE_PATCH.read_bytes()).hexdigest(),
             **({HS400_PATCH.name: hashlib.sha256(HS400_PATCH.read_bytes()).hexdigest()}

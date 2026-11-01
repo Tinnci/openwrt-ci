@@ -1,0 +1,54 @@
+--- a/block.c
++++ b/block.c
+@@ -14,3 +14,4 @@
+ 
+ #define _GNU_SOURCE
++#include <signal.h>
+ #include <getopt.h>
+@@ -1656,5 +1656,46 @@
+ 		return -1;
+ 	}
+ 
++	/* The internal overlay is mounted by mount_root before this second
++	 * extroot attempt. Activate only an explicitly configured LVM overlay.
++	 * Missing configuration leaves ordinary upstream extroot unchanged.
++	 */
++	const char *cfg = "/tmp/overlay/upper/etc/config/ax5_extroot";
++	const char *helper = "/tmp/overlay/upper/usr/libexec/ax5-extroot-activate";
++	struct stat st;
++	if (!lstat(cfg, &st)) {
++		if (!S_ISREG(st.st_mode) || st.st_uid ||
++		    (st.st_mode & (S_IWGRP | S_IWOTH)) ||
++		    lstat(helper, &st) || !S_ISREG(st.st_mode) || st.st_uid ||
++		    (st.st_mode & (S_IWGRP | S_IWOTH)))
++			return -1;
++		pid_t pid = fork();
++		int status = 0, done = 0;
++		if (!pid) {
++			setpgid(0, 0);
++			execl(helper, helper, NULL);
++			_exit(127);
++		}
++		if (pid < 0)
++			return -1;
++		setpgid(pid, pid);
++		for (int ticks = 0; ticks < 180; ticks++) {
++			pid_t result = waitpid(pid, &status, WNOHANG);
++			if (result == pid) { done = 1; break; }
++			if (result < 0 && errno != EINTR)
++				break;
++			usleep(100000);
++		}
++		if (!done) {
++			kill(-pid, SIGKILL);
++			while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
++			return -1;
++		}
++		if (!WIFEXITED(status) || WEXITSTATUS(status)) {
++			ULOG_WARN("AX5 LVM extroot unavailable; using internal overlay\n");
++			return -1;
++		}
++	}
++
+ 	make_devs();
+ 	cache_load(1);

@@ -1,10 +1,14 @@
 #!/bin/sh
+# BusyBox ash supports inherited fd13; rc.common consumes service variables.
+# shellcheck disable=SC3023
 set -eu
 [ "$(cat /tmp/sysinfo/board_name)" = redmi,ax5-jdcloud ]
 source=$(awk '$2=="/mnt/mmcblk0p18" && $3=="ext4" && $4 ~ /(^|,)rw(,|$)/ {print $1}' /proc/mounts)
 [ -n "$source" ]
 [ -b "$source" ]
 # OpenWrt block info indexes /dev/dm-N, while LVM also creates mapper nodes.
+# Deliberate split of exactly two hexadecimal device numbers.
+# shellcheck disable=SC2046
 set -- $(stat -Lc '%t %T' "$source")
 node=$(readlink -f "/sys/dev/block/$((0x$1)):$((0x$2))")
 source=/dev/${node##*/}
