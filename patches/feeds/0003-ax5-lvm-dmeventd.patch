@@ -8,11 +8,12 @@ autoextend work on the AX5 lab build.
 
 The plugin modules are installed into /usr/lib (not /usr/lib/device-mapper)
 because dmeventd resolves them through the normal library search path.
+A procd unit starts dmeventd at boot so pool monitoring survives reboots.
 
 Signed-off-by: AX5 build maintainers <build@localhost>
 ---
 diff --git a/utils/lvm2/Makefile b/utils/lvm2/Makefile
-index 7f6bdbf..863bb11 100644
+index 7f6bdbf..5b39cd9 100644
 --- a/utils/lvm2/Makefile
 +++ b/utils/lvm2/Makefile
 @@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
@@ -44,7 +45,7 @@ index 7f6bdbf..863bb11 100644
  	--disable-o_direct \
  	--with-default-pid-dir=/var/run \
  	--with-default-dm-run-dir=/var/run \
-@@ -168,3 +172,33 @@ $(eval $(call BuildPackage,libdevmapper))
+@@ -168,3 +172,36 @@ $(eval $(call BuildPackage,libdevmapper))
  $(eval $(call BuildPackage,libdevmapper-selinux))
  $(eval $(call BuildPackage,lvm2))
  $(eval $(call BuildPackage,lvm2-selinux))
@@ -74,7 +75,28 @@ index 7f6bdbf..863bb11 100644
 +	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/dmeventd $(1)/usr/sbin/
 +	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libdevmapper-event-lvm2*.so $(1)/usr/lib/
 +	$(CP) $(PKG_INSTALL_DIR)/usr/lib/liblvm2cmd.so* $(1)/usr/lib/
++	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/rc.d
++	$(INSTALL_BIN) ./files/dmeventd.init $(1)/etc/init.d/dmeventd
++	$(LN) ../init.d/dmeventd $(1)/etc/rc.d/S95dmeventd
 +endef
 +
 +$(eval $(call BuildPackage,libdevmapper-event))
 +$(eval $(call BuildPackage,lvm2-monitor))
+diff --git a/utils/lvm2/files/dmeventd.init b/utils/lvm2/files/dmeventd.init
+new file mode 100755
+index 0000000..c511db7
+--- /dev/null
++++ b/utils/lvm2/files/dmeventd.init
+@@ -0,0 +1,12 @@
++#!/bin/sh /etc/rc.common
++
++START=95
++STOP=10
++USE_PROCD=1
++
++start_service() {
++	procd_open_instance
++	procd_set_param command /usr/sbin/dmeventd -f
++	procd_set_param respawn 3600 5 0
++	procd_close_instance
++}
