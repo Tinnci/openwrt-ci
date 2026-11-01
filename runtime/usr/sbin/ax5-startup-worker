@@ -2,13 +2,18 @@
 # One bounded boot observation; no reboot or recovery decisions.
 set -eu
 umask 077
-lock=/tmp/ax5-startup.lock
+lock=/var/run/ax5-startup.lock
 mkdir "$lock" 2>/dev/null || exit 0
 trap 'rmdir "$lock"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 boot=$(cat /proc/sys/kernel/random/boot_id)
 case "$boot" in ''|*[!a-f0-9-]*) exit 1 ;; esac
-work=/tmp/ax5-startup
+work=/var/run/ax5-startup
+[ ! -L "$work" ] || exit 1
 mkdir -p "$work"
+[ "$(stat -c %u "$work")" = 0 ] || exit 1
+chmod 700 "$work"
 report="$work/boot-$boot.txt"
 # Use existing reserved RAM only; failure must not prevent normal startup.
 if [ -d /sys/fs/pstore ] && ! awk '$2=="/sys/fs/pstore" && $3=="pstore" {ok=1} END {exit !ok}' /proc/mounts; then
@@ -17,7 +22,9 @@ fi
 # Observe through the known Wi-Fi reconfiguration window and delayed disk mount.
 for elapsed in 0 30 60; do
  timeout 20 ax5-boot-health > "$report.tmp" 2>&1 || true
- mv "$report.tmp" "$report"
+ printf '\n[snapshot_seconds=%s]\n' "$elapsed" >> "$report"
+ head -c 131072 "$report.tmp" >> "$report"
+ rm -f "$report.tmp"
  [ "$elapsed" = 60 ] || sleep 30
 done
 # Never write to an unmounted /mnt path on the system overlay.

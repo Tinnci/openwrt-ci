@@ -13,8 +13,8 @@
 - `/etc/fw_env.config` 为本板明确APPSBLENV，不依赖早期自动发现；启动脚本没有fw_setenv。
   该配置不是针对root用户的写保护边界，root仍有原有的块设备/环境写工具权限。
 - 加入kmod-pstore/kmod-ramoops，使用原有1MiB预留区，不新增内存 carveout。
-- procd服务`ax5-startup`在正常启动后采集0/30/60秒阶段报告。每次采集限时20秒。
-  数据未挂载时只留/tmp；仅在正确p18 ext4挂载后写入`.ax5-diagnostics`，目录root专用。
+- procd服务`ax5-startup`在正常启动后采集0/30/60秒阶段报告。每次采集限时20秒、输出上限128KiB，保留三个阶段快照。
+  数据未挂载时只留/var/run/ax5-startup（RAM）；仅在正确p18 ext4挂载后写入`.ax5-diagnostics`，目录root专用。
   归档当前启动及至多四份旧记录，单个pstore文件截断至1MiB，不删除内核原始记录。
   时钟可能未同步，报告使用boot_id/uptime，轮转不会因NTP跳变删除本次记录。
 - emmc报告缺少od或读取失败时显示unavailable，避免假0；显式安装od/timeout/stat。

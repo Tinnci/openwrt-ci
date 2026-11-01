@@ -102,8 +102,8 @@ class StartupWorkerTests(unittest.TestCase):
             path.chmod(0o755)
         script = (ROOT / 'runtime/usr/sbin/ax5-startup-worker').read_text()
         for before, after in [
-            ('/tmp/ax5-startup.lock', str(root / 'lock')),
-            ('/tmp/ax5-startup', str(root / 'tmp')),
+            ('/var/run/ax5-startup.lock', str(root / 'lock')),
+            ('/var/run/ax5-startup', str(root / 'tmp')),
             ('/proc/sys/kernel/random/boot_id', str(root / 'bootid')),
             ('/proc/mounts', str(root / 'mounts')),
             ('/sys/fs/pstore', str(pstore)), ('/mnt/mmcblk0p18', str(data)),
@@ -121,7 +121,8 @@ class StartupWorkerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         dest = private / 'boot-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
         self.assertEqual((dest / 'console-ramoops-0').stat().st_size, 1048576)
-        self.assertEqual((dest / 'health.txt').read_text(), 'safe-health-report\n')
+        self.assertEqual((dest / 'health.txt').read_text().count('safe-health-report'), 3)
+        self.assertIn('snapshot_seconds=60', (dest / 'health.txt').read_text())
         self.assertEqual(len(list(private.glob('boot-*'))), 5)
         self.assertEqual((root / 'pstore/console-ramoops-0').stat().st_size, 1100000)
         self.assertFalse((root / 'lock').exists())
