@@ -1,0 +1,53 @@
+#!/bin/sh
+# One bounded boot observation; no reboot or recovery decisions.
+set -eu
+umask 077
+lock=/tmp/ax5-startup.lock
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rmdir "$lock"' EXIT
+boot=$(cat /proc/sys/kernel/random/boot_id)
+case "$boot" in ''|*[!a-f0-9-]*) exit 1 ;; esac
+work=/tmp/ax5-startup
+mkdir -p "$work"
+report="$work/boot-$boot.txt"
+# Use existing reserved RAM only; failure must not prevent normal startup.
+if [ -d /sys/fs/pstore ] && ! awk '$2=="/sys/fs/pstore" && $3=="pstore" {ok=1} END {exit !ok}' /proc/mounts; then
+ mount -t pstore pstore /sys/fs/pstore 2>/dev/null || true
+fi
+# Observe through the known Wi-Fi reconfiguration window and delayed disk mount.
+for elapsed in 0 30 60; do
+ timeout 20 ax5-boot-health > "$report.tmp" 2>&1 || true
+ mv "$report.tmp" "$report"
+ [ "$elapsed" = 60 ] || sleep 30
+done
+# Never write to an unmounted /mnt path on the system overlay.
+if ! awk '$1=="/dev/mmcblk0p18" && $2=="/mnt/mmcblk0p18" && $3=="ext4" {ok=1} END {exit !ok}' /proc/mounts; then
+ logger -t ax5-startup 'Report retained in /tmp; data partition unavailable'
+ exit 0
+fi
+store=/mnt/mmcblk0p18/.ax5-diagnostics
+[ ! -L "$store" ] || exit 1
+mkdir -p "$store"
+# Refuse directories supplied by a non-root share user.
+[ "$(stat -c %u "$store")" = 0 ] || exit 1
+chmod 700 "$store"
+dest="$store/boot-$boot"
+mkdir "$dest" 2>/dev/null || exit 0
+cp "$report" "$dest/health.txt"
+for record in /sys/fs/pstore/dmesg-ramoops-* /sys/fs/pstore/console-ramoops-*; do
+ [ -f "$record" ] || continue
+ head -c 1048576 "$record" > "$dest/${record##*/}"
+done
+# Names are generated solely from kernel UUIDs. Retain five boots (bounded size).
+count=0
+# UUID-only directories in a root-owned 0700 path; retain current even if NTP jumps.
+# shellcheck disable=SC2012
+ls -dt "$store"/boot-* 2>/dev/null | while IFS= read -r previous; do
+ [ "$previous" = "$dest" ] && continue
+ suffix=${previous##*/}; suffix=${suffix#boot-}
+ case "$suffix" in ''|*[!a-f0-9-]*) continue ;; esac
+ count=$((count + 1))
+ [ "$count" -le 4 ] && continue
+ [ -d "$previous" ] && [ ! -L "$previous" ] && rm -rf -- "$previous"
+done
+logger -t ax5-startup 'Boot report saved; WAN reachability is not a health requirement'

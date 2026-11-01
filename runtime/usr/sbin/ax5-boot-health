@@ -1,0 +1,58 @@
+#!/bin/sh
+# Read-only, bounded report. No credentials, full environment, or packet dumps.
+set -u
+value() { if [ -r "$2" ]; then printf '%s=' "$1"; tr '\000\n' '  ' < "$2"; printf '\n'; else printf '%s=unavailable\n' "$1"; fi; }
+printf '[boot]\n'
+value boot_id /proc/sys/kernel/random/boot_id
+value uptime /proc/uptime
+value model /tmp/sysinfo/model
+printf 'kernel=%s\n' "$(uname -r)"
+printf 'wall_clock=%s (may be unsynchronized)\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+value build /etc/ax5-build-id
+printf '\n[storage]\n'
+for target in /overlay /mnt/mmcblk0p18; do
+ awk -v t="$target" '$2==t {print $1, $2, $3, $4; found=1} END {if(!found)print t,"not mounted"}' /proc/mounts
+done
+if command -v sha256sum >/dev/null 2>&1; then
+ printf 'uboot_sha256='
+ if [ -b /dev/mmcblk0p13 ]; then sha256sum /dev/mmcblk0p13 | cut -d' ' -f1; else echo unavailable; fi
+fi
+printf '\n[boot_environment]\n'
+if command -v ax5-bootenv-read >/dev/null 2>&1; then ax5-bootenv-read || echo 'bootenv_read=failed'; else echo 'bootenv_read=unavailable'; fi
+printf '\n[local_readiness]\n'
+if awk '$2=="/overlay" && $4 ~ /(^|,)rw(,|$)/ {ok=1} END {exit !ok}' /proc/mounts; then
+ echo 'overlay=ready'
+else echo 'overlay=not_ready'; fi
+if awk '$1=="/dev/mmcblk0p18" && $2=="/mnt/mmcblk0p18" && $3=="ext4" {ok=1} END {exit !ok}' /proc/mounts; then
+ echo 'data=mounted'
+else echo 'data=not_mounted'; fi
+host=$(uci -q get system.@system[0].hostname || true)
+domain=$(uci -q get dhcp.@dnsmasq[0].domain || true)
+if [ -n "$host" ] && [ -n "$domain" ] && command -v timeout >/dev/null 2>&1; then
+ if timeout 4 nslookup "$host.$domain" 127.0.0.1 >/dev/null 2>&1; then
+  echo 'local_dns=ready'
+ else echo 'local_dns=not_ready'; fi
+else echo 'local_dns=unavailable'; fi
+printf '\n[memory]\n'
+cat /proc/swaps
+for resource in cpu memory io; do value "psi_$resource" "/proc/pressure/$resource"; done
+printf '\n[network]\n'
+printf 'lan=%s\n' "$(uci -q get network.lan.ipaddr || echo unavailable)"
+printf 'domain=%s\n' "$(uci -q get dhcp.@dnsmasq[0].domain || echo unavailable)"
+value wifi_nss_offload /sys/module/ath11k/parameters/nss_offload
+for family in ipv4 ipv6; do
+ value "ecm_${family}_accelerated" "/sys/kernel/debug/ecm/ecm_nss_$family/accelerated_count"
+done
+# No clients/accelerated flows and an offline WAN are normal on a lab device.
+if command -v iw >/dev/null 2>&1; then iw dev | awk '/^phy#|Interface|type |channel |txpower /'; fi
+printf '\n[thermal]\n'
+for zone in /sys/class/thermal/thermal_zone*; do
+ [ -d "$zone" ] || continue
+ value "${zone##*/}_type" "$zone/type"
+ value "${zone##*/}_millidegrees" "$zone/temp"
+done
+printf '\n[emmc]\n'
+if command -v ax5-emmc-report >/dev/null 2>&1; then ax5-emmc-report; else echo 'emmc_report=unavailable'; fi
+printf '\n[boot_events_monotonic]\n'
+# Select boot milestones, never a complete kernel log containing arbitrary data.
+dmesg 2>/dev/null | grep -E 'new HS200|mmcblk0: p1 |Mounted root|switching to .*overlay|NSS core .*booted|ECM init complete|Adding .*swap on /dev/zram|entered forwarding state' || true

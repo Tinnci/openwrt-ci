@@ -89,3 +89,12 @@ cat > files/etc/sysctl.d/90-ax5-memory.conf <<'EOF'
 vm.dirty_background_bytes=4194304
 vm.dirty_bytes=16777216
 EOF
+
+# Runtime files are reviewed and tested alongside the locked build profile.
+cp -R "$script_dir/../runtime/." files/
+cat > files/etc/uci-defaults/96-ax5-startup <<'EOF'
+#!/bin/sh
+/etc/init.d/ax5-startup enable
+exit 0
+EOF
+chmod 755 files/etc/uci-defaults/96-ax5-startup

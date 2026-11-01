@@ -65,7 +65,7 @@ class BuildTests(unittest.TestCase):
         self.kernel_config.parent.mkdir(parents=True)
         self.kernel_config.write_text(
             "CONFIG_MODULES=y\nCONFIG_MMC=y\nCONFIG_NFSD_V4=y\n" +
-            "CONFIG_PSI=y\nCONFIG_SMP=y\nCONFIG_RPS=y\nCONFIG_XPS=y\n" +
+            "CONFIG_PSI=y\nCONFIG_SMP=y\nCONFIG_RPS=y\nCONFIG_XPS=y\nCONFIG_PSTORE_CONSOLE=y\n" +
             "CONFIG_SWAP=y\nCONFIG_ZSMALLOC=m\nCONFIG_ZRAM_BACKEND_LZO=y\n" +
             "".join(f"CONFIG_{symbol}=y\n" for symbol in build.STORAGE_SYMBOLS) +
             "".join(f"CONFIG_{symbol}=m\n" for symbol in build.KERNEL_MODULES.values())
@@ -297,6 +297,11 @@ class BuildTests(unittest.TestCase):
             'PKG_LICENSE:=Apache-2.0\n'
             'PKG_MAINTAINER:=Josef Schlehofer <pepe.schlehofer@gmail.com>\n'
         )
+        for name in ("preinit", "init", "hotplug"):
+            fixture = Path(__file__).parent / "fixtures" / ("lvm2." + name)
+            dest = self.root / "feeds/packages/utils/lvm2/files" / fixture.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(fixture.read_text())
         build.patch_feeds(self.root)
         self.assertIn("+weechat-minimal", recipe.read_text())
         self.assertNotIn("+weechat ", recipe.read_text())

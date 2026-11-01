@@ -34,8 +34,13 @@ if [ -d "$sysfs/firmware/devicetree/base" ]; then
 		for property in bus-width max-frequency; do
 			printf '%s=' "$property"
 			if [ -r "$node/$property" ]; then
-				od -An -tu1 "$node/$property" |
-					awk '{for (i=1;i<=NF;i++) v=v*256+$i} END {printf "%.0f\n",v}'
+				if command -v od >/dev/null 2>&1 && bytes=$(od -An -tu1 "$node/$property" 2>/dev/null); then
+					printf '%s\n' "$bytes" | awk '
+					  {for(i=1;i<=NF;i++){n++; if($i!~/^[0-9]+$/ || $i>255)bad=1; v=v*256+$i}}
+					  END {if(n==4 && !bad)printf "%.0f\n",v; else print "unavailable (invalid property)"}'
+				else
+					printf 'unavailable (od missing or read failed)\n'
+				fi
 			else
 				printf 'unspecified\n'
 			fi

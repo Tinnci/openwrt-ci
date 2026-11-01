@@ -15,6 +15,7 @@ REPO = Path(__file__).resolve().parents[1]
 LOCK_PATH = REPO / "configs/ax5-build.lock.json"
 SEED = REPO / "configs/ipq60xx-custom-wifi.config"
 FEED_PATCH = REPO / "patches/feeds/0001-luci-weechat-select-concrete-provider.patch"
+LVM_PATCH = REPO / "patches/feeds/0002-ax5-lvm-explicit-activation.patch"
 SOURCE_PATCH = REPO / "patches/source/0001-ax5-jdcloud-describe-fixed-emmc-bus.patch"
 KERNEL_PATCH = REPO / "patches/kernel/9999-mmc-core-retry-ax5-hs400-init-with-hs200.patch"
 HS400_PATCH = REPO / "patches/source/0002-ax5-jdcloud-experimental-hs400.patch"
@@ -29,7 +30,7 @@ REQUIRED = (
     "avahi-dbus-daemon", "wsdd2", "minidlna", "luci-app-minidlna",
     "nfs-kernel-server", "nfs-utils", "kmod-fs-nfsd", "rpcbind",
     "kmod-qca-nss-ecm", "kmod-qca-nss-drv-bridge-mgr", "kmod-qca-nss-drv-vlan-mgr",
-    "block-mount", "openssh-sftp-server",
+    "block-mount", "openssh-sftp-server", "ax5-startup-tools", "coreutils-od", "coreutils-timeout", "coreutils-stat",
     "zram-swap", "lvm2", "cryptsetup", "veritysetup", "integritysetup", "losetup",
 )
 # Check the real Linux configuration, not just OpenWrt's package selections.
@@ -42,6 +43,7 @@ KERNEL_MODULES = {
     "sched-cake": "NET_SCH_CAKE", "fs-cifs": "CIFS", "fs-btrfs": "BTRFS_FS",
     "fs-xfs": "XFS_FS", "loop": "BLK_DEV_LOOP", "veth": "VETH",
     "zram": "ZRAM", "dm": "BLK_DEV_DM",
+    "pstore": "PSTORE", "ramoops": "PSTORE_RAM",
     "ax5-dynamic-storage": "DM_THIN_PROVISIONING",
 }
 STORAGE_SYMBOLS = {
@@ -152,16 +154,24 @@ def patch_feeds(root):
     # Fail on changed context instead of silently skipping or patching another version.
     subprocess.run([*command, "--check", str(FEED_PATCH)], check=True)
     subprocess.run([*command, str(FEED_PATCH)], check=True)
+    command = ["git", "-C", str(root / "feeds/packages"), "apply"]
+    subprocess.run([*command, "--check", str(LVM_PATCH)], check=True)
+    subprocess.run([*command, str(LVM_PATCH)], check=True)
 
 
 def configure(root):
     verify_revisions(root)
     install_storage_modules(root)
+    shutil.copytree(REPO / "packages/ax5-startup-tools",
+                    root / "package/ax5-startup-tools", dirs_exist_ok=True)
     # feeds update refreshes any existing .config before packages are installed.
     # Restore the seed only after feed update, patching and installation are complete.
     shutil.copyfile(SEED, root / ".config")
     subprocess.run(["make", "defconfig", "RECURSIVE_DEP_IS_ERROR=1"], cwd=root, check=True)
     verify_storage_dependencies(root)
+    identity = build_identity()
+    (root / "files/etc").mkdir(parents=True, exist_ok=True)
+    (root / "files/etc/ax5-build-id").write_text(identity["build_id"] + "\n")
     snapshot(root)
 
 
@@ -371,6 +381,7 @@ def snapshot(root):
     shutil.copyfile(root / "feeds.conf.default", out / "feeds.conf")
     shutil.copyfile(LOCK_PATH, out / LOCK_PATH.name)
     shutil.copyfile(FEED_PATCH, out / FEED_PATCH.name)
+    shutil.copyfile(LVM_PATCH, out / LVM_PATCH.name)
     shutil.copyfile(SOURCE_PATCH, out / SOURCE_PATCH.name)
     shutil.copyfile(KERNEL_PATCH, out / KERNEL_PATCH.name)
     shutil.copyfile(STORAGE_MODULES, out / STORAGE_MODULES.name)
@@ -385,7 +396,8 @@ def snapshot(root):
         "storage_modules": {
             STORAGE_MODULES.name: hashlib.sha256(STORAGE_MODULES.read_bytes()).hexdigest(),
         },
-        "feed_patches": {FEED_PATCH.name: hashlib.sha256(FEED_PATCH.read_bytes()).hexdigest()},
+        "feed_patches": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                         for p in (FEED_PATCH, LVM_PATCH)},
         "source_patches": {
             SOURCE_PATCH.name: hashlib.sha256(SOURCE_PATCH.read_bytes()).hexdigest(),
             **({HS400_PATCH.name: hashlib.sha256(HS400_PATCH.read_bytes()).hexdigest()}
@@ -422,6 +434,8 @@ def audit_kernel(root, config_path=None, prefix="kernel"):
         f"CONFIG_{symbol}" for module, symbol in KERNEL_MODULES.items()
         if f"kmod-{module}" in requested_modules()
     )
+    if "kmod-ramoops" in requested_modules():
+        expected.add("CONFIG_PSTORE_CONSOLE")
     if "kmod-zram" in requested_modules():
         expected.update({"CONFIG_SWAP", "CONFIG_ZSMALLOC", "CONFIG_ZRAM_BACKEND_LZO"})
     out = root / "provenance"
