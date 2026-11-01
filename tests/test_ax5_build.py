@@ -302,6 +302,9 @@ class BuildTests(unittest.TestCase):
             dest = self.root / "feeds/packages/utils/lvm2/files" / fixture.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(fixture.read_text())
+        recipe_file = Path(__file__).parent / "fixtures" / "lvm2.Makefile"
+        makefile = self.root / "feeds/packages/utils/lvm2/Makefile"
+        makefile.write_text(recipe_file.read_text())
         build.patch_feeds(self.root)
         self.assertIn("+weechat-minimal", recipe.read_text())
         self.assertNotIn("+weechat ", recipe.read_text())

@@ -1,0 +1,80 @@
+From: AX5 build maintainers <build@localhost>
+Subject: [PATCH] lvm2: package dmeventd and thin pool monitoring support
+
+Build dmeventd together with the LVM command library, provide the
+device-mapper event library and install the dmeventd plugins
+(thin/snapshot/raid/mirror/vdo) so that thin pool monitoring and
+autoextend work on the AX5 lab build.
+
+The plugin modules are installed into /usr/lib (not /usr/lib/device-mapper)
+because dmeventd resolves them through the normal library search path.
+
+Signed-off-by: AX5 build maintainers <build@localhost>
+---
+diff --git a/utils/lvm2/Makefile b/utils/lvm2/Makefile
+index 7f6bdbf..863bb11 100644
+--- a/utils/lvm2/Makefile
++++ b/utils/lvm2/Makefile
+@@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
+ PKG_NAME:=LVM2
+ PKG_VERSION:=2.03.33
+ PKG_VERSION_DM:=1.02.207
+-PKG_RELEASE:=2
++PKG_RELEASE:=3
+ 
+ PKG_SOURCE:=$(PKG_NAME).$(PKG_VERSION).tgz
+ PKG_SOURCE_URL:=https://sourceware.org/pub/lvm2 \
+@@ -74,7 +74,7 @@ endef
+ define Package/lvm2
+   $(call Package/lvm2/default)
+   VARIANT := normal
+-  DEPENDS += +libdevmapper
++  DEPENDS += +libdevmapper +libdevmapper-event
+ endef
+ 
+ define Package/lvm2-selinux
+@@ -98,6 +98,10 @@ endef
+ 
+ 
+ CONFIGURE_ARGS += \
++	--enable-dmeventd \
++	--enable-cmdlib \
++	--without-systemd \
++	--without-udev \
+ 	--disable-o_direct \
+ 	--with-default-pid-dir=/var/run \
+ 	--with-default-dm-run-dir=/var/run \
+@@ -168,3 +172,33 @@ $(eval $(call BuildPackage,libdevmapper))
+ $(eval $(call BuildPackage,libdevmapper-selinux))
+ $(eval $(call BuildPackage,lvm2))
+ $(eval $(call BuildPackage,lvm2-selinux))
++
++
++define Package/libdevmapper-event
++  $(call Package/libdevmapper/Default)
++  VARIANT:=normal
++  TITLE:=Device mapper event library
++  DEPENDS:=+libdevmapper
++endef
++
++define Package/lvm2-monitor
++  $(call Package/lvm2/default)
++  VARIANT:=normal
++  TITLE:=LVM2 thin pool monitoring daemon and plugins
++  DEPENDS:=+lvm2 +libdevmapper-event
++endef
++
++define Package/libdevmapper-event/install
++	$(INSTALL_DIR) $(1)/usr/lib
++	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libdevmapper-event.so* $(1)/usr/lib/
++endef
++
++define Package/lvm2-monitor/install
++	$(INSTALL_DIR) $(1)/usr/sbin $(1)/usr/lib
++	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/dmeventd $(1)/usr/sbin/
++	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libdevmapper-event-lvm2*.so $(1)/usr/lib/
++	$(CP) $(PKG_INSTALL_DIR)/usr/lib/liblvm2cmd.so* $(1)/usr/lib/
++endef
++
++$(eval $(call BuildPackage,libdevmapper-event))
++$(eval $(call BuildPackage,lvm2-monitor))

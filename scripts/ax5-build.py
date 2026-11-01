@@ -16,6 +16,7 @@ LOCK_PATH = REPO / "configs/ax5-build.lock.json"
 SEED = REPO / "configs/ipq60xx-custom-wifi.config"
 FEED_PATCH = REPO / "patches/feeds/0001-luci-weechat-select-concrete-provider.patch"
 LVM_PATCH = REPO / "patches/feeds/0002-ax5-lvm-explicit-activation.patch"
+DMEVENTD_PATCH = REPO / "patches/feeds/0003-ax5-lvm-dmeventd.patch"
 SOURCE_PATCH = REPO / "patches/source/0001-ax5-jdcloud-describe-fixed-emmc-bus.patch"
 KERNEL_PATCH = REPO / "patches/kernel/9999-mmc-core-retry-ax5-hs400-init-with-hs200.patch"
 HS400_PATCH = REPO / "patches/source/0002-ax5-jdcloud-experimental-hs400.patch"
@@ -31,7 +32,8 @@ REQUIRED = (
     "nfs-kernel-server", "nfs-utils", "kmod-fs-nfsd", "rpcbind",
     "kmod-qca-nss-ecm", "kmod-qca-nss-drv-bridge-mgr", "kmod-qca-nss-drv-vlan-mgr",
     "block-mount", "openssh-sftp-server", "ax5-startup-tools", "coreutils-od", "coreutils-timeout", "coreutils-stat",
-    "zram-swap", "lvm2", "cryptsetup", "veritysetup", "integritysetup", "losetup",
+    "zram-swap", "lvm2", "lvm2-monitor", "thin-provisioning-tools",
+    "cryptsetup", "veritysetup", "integritysetup", "losetup",
 )
 # Check the real Linux configuration, not just OpenWrt's package selections.
 KERNEL_MODULES = {
@@ -155,15 +157,19 @@ def patch_feeds(root):
     subprocess.run([*command, "--check", str(FEED_PATCH)], check=True)
     subprocess.run([*command, str(FEED_PATCH)], check=True)
     command = ["git", "-C", str(root / "feeds/packages"), "apply"]
-    subprocess.run([*command, "--check", str(LVM_PATCH)], check=True)
-    subprocess.run([*command, str(LVM_PATCH)], check=True)
+    for patch in (LVM_PATCH, DMEVENTD_PATCH):
+        subprocess.run([*command, "--check", str(patch)], check=True)
+    for patch in (LVM_PATCH, DMEVENTD_PATCH):
+        subprocess.run([*command, str(patch)], check=True)
 
 
 def configure(root):
     verify_revisions(root)
     install_storage_modules(root)
-    shutil.copytree(REPO / "packages/ax5-startup-tools",
-                    root / "package/ax5-startup-tools", dirs_exist_ok=True)
+    for package in sorted((REPO / "packages").iterdir()):
+        if package.is_dir():
+            shutil.copytree(package, root / "package" / package.name,
+                            dirs_exist_ok=True)
     # feeds update refreshes any existing .config before packages are installed.
     # Restore the seed only after feed update, patching and installation are complete.
     shutil.copyfile(SEED, root / ".config")
