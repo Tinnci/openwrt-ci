@@ -1,0 +1,66 @@
+#!/bin/sh
+# Back up metadata only; user data requires its own backup.
+set -eu
+[ "$#" -ge 2 ] && [ "$#" -le 3 ] || { echo 'Usage: ax5-thin-backup VG POOL [LABEL]' >&2; exit 2; }
+vg=$1
+pool=$2
+for name in "$vg" "$pool"; do
+ case "$name" in ''|*[!a-zA-Z0-9_-]*|-*) echo 'Invalid LVM name' >&2; exit 2;; esac
+done
+[ "$(cat /tmp/sysinfo/board_name)" = redmi,ax5-jdcloud ]
+awk '$1=="/dev/mmcblk0p18" && $2=="/mnt/mmcblk0p18" && $3=="ext4" {ok=1} END {exit !ok}' /proc/mounts
+umask 077
+v=$(printf '%s' "$vg" | sed 's/-/--/g')
+p=$(printf '%s' "$pool" | sed 's/-/--/g')
+target=$v-$p-tpool
+meta=/dev/mapper/$v-${p}_tmeta
+lock=/var/run/ax5-thin-backup-$v-$p.lock
+mkdir "$lock" || exit 1
+reserved=0
+cleanup() {
+ rc=$?; trap - EXIT; set +e
+ [ "$reserved" = 0 ] || dmsetup message "$target" 0 release_metadata_snap
+ rmdir "$lock"
+ exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+label=${3:-${vg}_${pool}_$(cut -d. -f1 /proc/uptime)_$(cut -c1-8 /proc/sys/kernel/random/boot_id)}
+case "$label" in ''|*[!a-zA-Z0-9_-]*|-*) echo 'Invalid backup label' >&2; exit 2;; esac
+base=/mnt/mmcblk0p18/.lvm-backups
+[ ! -L "$base" ]
+mkdir -p "$base"
+[ "$(stat -c %u "$base")" = 0 ]
+chmod 700 "$base"
+out=$base/$label
+mkdir "$out"
+status=$(dmsetup status "$target")
+count=$(printf '%s\n' "$status" | awk '$3=="thin-pool" {split($6,a,"/");print a[2]}')
+metadata_blocks=$(printf '%s\n' "$status" | awk '$3=="thin-pool" {split($5,a,"/");print a[2]}')
+block_sectors=$(dmsetup table "$target" | awk '$3=="thin-pool" {print $6}')
+for value in "$count" "$metadata_blocks" "$block_sectors"; do
+ case "$value" in ''|*[!0-9]*) echo 'Invalid pool geometry' >&2; exit 1;; esac
+ [ "$value" -gt 0 ]
+done
+lvm vgcfgbackup -f "$out/vg.conf" "$vg" >&2
+dmsetup message "$target" 0 reserve_metadata_snap
+reserved=1
+thin_dump --metadata-snap "$meta" > "$out/metadata-raw.xml"
+dmsetup message "$target" 0 release_metadata_snap
+reserved=0
+status_after=$(dmsetup status "$target")
+geometry_after=$(printf '%s\n' "$status_after" | awk '$3=="thin-pool" {split($5,m,"/");split($6,d,"/");print m[2],d[2]}')
+[ "$geometry_after" = "$metadata_blocks $count" ] || { echo 'Pool geometry changed during backup; retry with a new label.' >&2; exit 1; }
+# Snapshot superblocks can omit the data space map and export a zero count.
+# Record real pool geometry and repair that header field, preserving all mappings.
+sed "s/nr_data_blocks=\"0\"/nr_data_blocks=\"$count\"/" "$out/metadata-raw.xml" > "$out/metadata.xml"
+printf '{"vg":"%s","pool":"%s","nr_data_blocks":%s,"data_block_size_sectors":%s,"metadata_bytes":%s}\n' "$vg" "$pool" "$count" "$block_sectors" "$((metadata_blocks * 4096))" > "$out/layout.json"
+cat > "$out/RESTORE.txt" <<'RESTORE'
+Metadata backup only. Restore to a NEW metadata file/device of at least metadata_bytes from layout.json:
+  thin_restore -i metadata.xml -o NEW_METADATA
+  thin_check NEW_METADATA
+Keep the original metadata-raw.xml and layout.json for audit. Data blocks need a separate consistent backup. vg.conf alone cannot reconstruct thin mappings. Never overwrite a mounted production pool for a test.
+RESTORE
+(cd "$out" && sha256sum metadata-raw.xml metadata.xml layout.json vg.conf RESTORE.txt > SHA256SUMS)
+printf '%s\n' "$out"
