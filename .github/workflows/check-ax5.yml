@@ -57,7 +57,7 @@ jobs:
           sh -n scripts/collect-emmc-telemetry.sh
           sh -n scripts/benchmark-emmc.sh
       - name: 04 - 检查 Shell 静态问题
-        run: shellcheck scripts/customize-ax5.sh scripts/collect-emmc-telemetry.sh scripts/benchmark-emmc.sh runtime/usr/sbin/* runtime/etc/init.d/* runtime/usr/libexec/* runtime/lib/upgrade/*.sh
+        run: shellcheck packages/thin-provisioning-tools/files/*.sh scripts/customize-ax5.sh scripts/collect-emmc-telemetry.sh scripts/benchmark-emmc.sh runtime/usr/sbin/* runtime/etc/init.d/* runtime/usr/libexec/* runtime/lib/upgrade/*.sh
 
   config:
     name: AX5 JDCloud - 真实源码配置核验

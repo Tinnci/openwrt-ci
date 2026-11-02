@@ -371,6 +371,11 @@ class BuildTests(unittest.TestCase):
                          hashlib.sha256(build.KERNEL_PATCH.read_bytes()).hexdigest())
         self.assertEqual((self.root / "provenance" / build.KERNEL_PATCH.name).read_bytes(),
                          build.KERNEL_PATCH.read_bytes())
+        for thin_patch in (build.REPO / "packages/thin-provisioning-tools/patches").glob("*.patch"):
+            self.assertEqual(metadata["package_patches"][thin_patch.name],
+                             hashlib.sha256(thin_patch.read_bytes()).hexdigest())
+            self.assertEqual((self.root / "provenance" / thin_patch.name).read_bytes(),
+                             thin_patch.read_bytes())
         self.assertNotIn(build.HS400_PATCH.name, metadata["source_patches"])
         subprocess.run(["git", "-C", str(self.root), "apply", str(build.HS400_PATCH)],
                        check=True)

@@ -74,3 +74,31 @@ all six packaged entry points using the target musl loader, restored/dumped
 empty and mapped thin metadata, passed thin_check, and rejected invalid
 metadata. These tests run in the local container; they do not change the lab
 router. Full-image CI and independent artifact verification remain required.
+
+Build 350 exposed a second issue on the x86_64 runner: devicemapper 0.34.8
+uses devicemapper-sys as both a target library dependency and a host build
+dependency for header constants. Its host instance inherited target
+libdevmapper link metadata. An ARM64 host build alone did not reveal this
+architecture mismatch.
+
+The r3 package patch adds a host-only devicemapper-sys build dependency with
+`disable_cargo_metadata`, plus an empty root build script to activate it.
+Cargo resolver 2 unifies this with devicemapper's host build dependency while
+keeping target features separate. Target bindings still emit the normal
+libdevmapper linkage; no upstream runtime functionality is removed. The
+lockfile adds the already-pinned dependency without changing crate versions
+or checksums. Bindgen continues reading the target headers for both instances,
+so the build script's ioctl-version constants describe the target.
+
+`files/check-linkage.sh` inspects actual Cargo host and target outputs after
+compilation. It rejects host native-link metadata, missing evidence, or missing
+target devmapper linkage, including when host and target have the same CPU ISA.
+The source patch is copied and hashed in the build provenance. Full x86_64 CI
+and final firmware validation remain required before deployment.
+
+Local r3 validation used Rust 1.96.0 and a clean OpenWrt package build. The
+post-build audit passed; all six APK entry points reported 1.3.4 through the
+target musl loader. A mapped device (origin block 0 to data block 7) survived
+restore/check/dump, and zeroed metadata was rejected. The local APK was extracted
+with signature enforcement disabled for offline inspection only; this is not
+CI APK signature verification or a firmware acceptance result.

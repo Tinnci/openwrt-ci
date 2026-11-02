@@ -1,0 +1,36 @@
+From: AX5 build maintainers
+Subject: [PATCH] Keep target libdevmapper out of host build-script linkage
+
+The devicemapper build script uses devicemapper-sys only for header constants.
+Unify its host dependency with disable_cargo_metadata while retaining normal
+pkg-config link metadata for the target dependency (Cargo resolver 2). A root
+build script makes the host dependency participate in the build graph. No
+crate version or registry checksum changes are needed.
+
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -41,6 +41,9 @@
+ termion = { version = "4.0", optional = true }
+ udev = "0.9"
+ 
++[build-dependencies]
++devicemapper-sys = { version = "0.3.0", features = ["disable_cargo_metadata"] }
++
+ [dev-dependencies]
+ duct = "1.1"
+ mockall = "0.13"
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1551,6 +1551,7 @@
+  "crc32c",
+  "data-encoding",
+  "devicemapper",
++ "devicemapper-sys",
+  "duct",
+  "exitcode",
+  "fixedbitset",
+--- /dev/null
++++ b/build.rs
+@@ -0,0 +1,2 @@
++// Unify the host-only bindings dependency without linking target libraries.
++fn main() {}

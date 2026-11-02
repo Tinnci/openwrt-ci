@@ -400,6 +400,9 @@ def snapshot(root):
         ["bash", "-c", "./scripts/diffconfig.sh > provenance/diffconfig"],
         cwd=root, check=True,
     )
+    thin_patches = sorted((REPO / "packages/thin-provisioning-tools/patches").glob("*.patch"))
+    for patch in thin_patches:
+        shutil.copyfile(patch, out / patch.name)
     metadata = {
         **build_identity(),
         "storage_modules": {
@@ -407,7 +410,8 @@ def snapshot(root):
         },
         "feed_patches": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                          for p in (FEED_PATCH, LVM_PATCH, DMEVENTD_PATCH)},
-        "package_patches": {EXTROOT_PATCH.name: hashlib.sha256(EXTROOT_PATCH.read_bytes()).hexdigest()},
+        "package_patches": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                            for p in (EXTROOT_PATCH, *thin_patches)},
         "source_patches": {
             SOURCE_PATCH.name: hashlib.sha256(SOURCE_PATCH.read_bytes()).hexdigest(),
             **({HS400_PATCH.name: hashlib.sha256(HS400_PATCH.read_bytes()).hexdigest()}

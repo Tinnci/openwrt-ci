@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=thin-provisioning-tools
 PKG_VERSION:=1.3.4
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/jthornber/thin-provisioning-tools/tar.gz/v$(PKG_VERSION)?
@@ -26,6 +26,12 @@ include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 # bindgen must parse target musl headers, not the runner's host libc headers.
 CARGO_PKG_VARS += \
 	BINDGEN_EXTRA_CLANG_ARGS="--target=$(RUSTC_TARGET_ARCH) -isystem $(TOOLCHAIN_DIR)/include -isystem $(STAGING_DIR)/usr/include"
+
+# Fail on host/target linkage regressions before publishing the APK.
+define Build/Compile
+	$(call Build/Compile/Cargo)
+	sh $(CURDIR)/files/check-linkage.sh $(PKG_BUILD_DIR) $(RUSTC_TARGET_ARCH) $(if $(filter dev,$(CARGO_PKG_PROFILE)),debug,$(CARGO_PKG_PROFILE))
+endef
 
 define Package/thin-provisioning-tools
   SECTION:=utils
