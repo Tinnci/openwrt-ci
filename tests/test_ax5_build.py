@@ -54,6 +54,14 @@ class BuildTests(unittest.TestCase):
             '&sdhc {\n\tstatus = "okay";\n\tbus-width = <4>;\n\tnon-removable;\n\tmax-frequency = <192000000>;\n\t/delete-property/ mmc-hs400-enhanced-strobe;\n',
         )
         self.dts.write_text(self.prepared_dts)
+        nss_patch = self.root / (
+            "package/kernel/mac80211/patches/nss/ath11k/"
+            "199-002-ath11k_nss-add-nss-driver-interface.patch"
+        )
+        nss_patch.parent.mkdir(parents=True)
+        nss_patch.write_bytes(
+            (Path(__file__).parent / "fixtures/ath11k-nss-peer-stats.patch").read_bytes()
+        )
         self.config = build.SEED.read_text() + "\nCONFIG_KERNEL_IPQ_MEM_PROFILE=512\n"
         (self.root / ".config").write_text(self.config)
         kernel = self.root / "target/linux/generic/kernel-6.12"
@@ -113,6 +121,15 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(len(lines), len(set(lines)))
         self.assertTrue(all(f"CONFIG_PACKAGE_{name}=y" in self.config for name in build.REQUIRED))
 
+    def test_channel_optimizer_uses_commit_locked_fork(self):
+        feed = next(feed for feed in self.lock["feeds"]
+                    if feed["name"] == "wifi_auto_channel")
+        self.assertEqual(feed["url"], "https://github.com/Tinnci/wifi-auto-channel.git")
+        self.assertRegex(feed["commit"], r"^[0-9a-f]{40}$")
+        self.assertIn("CONFIG_PACKAGE_wifi-auto-channel=y", build.SEED.read_text())
+        self.assertIn("wifi-auto-channel", build.REQUIRED)
+        self.assertFalse((build.REPO / "packages/wifi-auto-channel").exists())
+
     def test_identity_is_stable_and_distinguishes_retries(self):
         with patch.dict("os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}):
             first = build.build_identity()
@@ -158,6 +175,25 @@ class BuildTests(unittest.TestCase):
         ))
         kernel_patch = self.root / "target/linux/qualcommax/patches-6.12" / build.KERNEL_PATCH.name
         self.assertEqual(kernel_patch.read_bytes(), build.KERNEL_PATCH.read_bytes())
+        nss_patch = self.root / (
+            "package/kernel/mac80211/patches/nss/ath11k/"
+            "199-002-ath11k_nss-add-nss-driver-interface.patch"
+        )
+        self.assertIn("+\t\ttx_dropped = 0;\n+\t\tfor (j = 0;", nss_patch.read_text())
+
+    def test_prepare_rejects_changed_nss_context_before_source_changes(self):
+        (self.root / ".config").unlink()
+        self.dts.write_text(self.original_dts)
+        nss_patch = self.root / (
+            "package/kernel/mac80211/patches/nss/ath11k/"
+            "199-002-ath11k_nss-add-nss-driver-interface.patch"
+        )
+        nss_patch.write_text("unexpected upstream NSS patch\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            build.prepare(self.root)
+        self.assertEqual(self.dts.read_text(), self.original_dts)
+        self.assertEqual(nss_patch.read_text(), "unexpected upstream NSS patch\n")
+        self.assertFalse((self.root / "feeds.conf.default").exists())
 
     def test_prepare_rejects_existing_kernel_patch(self):
         (self.root / ".config").unlink()
@@ -367,6 +403,10 @@ class BuildTests(unittest.TestCase):
                          hashlib.sha256(build.SOURCE_PATCH.read_bytes()).hexdigest())
         self.assertEqual((self.root / "provenance" / build.SOURCE_PATCH.name).read_bytes(),
                          build.SOURCE_PATCH.read_bytes())
+        self.assertEqual(metadata["source_patches"][build.NSS_STATS_PATCH.name],
+                         hashlib.sha256(build.NSS_STATS_PATCH.read_bytes()).hexdigest())
+        self.assertEqual((self.root / "provenance" / build.NSS_STATS_PATCH.name).read_bytes(),
+                         build.NSS_STATS_PATCH.read_bytes())
         self.assertEqual(metadata["kernel_patches"][build.KERNEL_PATCH.name],
                          hashlib.sha256(build.KERNEL_PATCH.read_bytes()).hexdigest())
         self.assertEqual((self.root / "provenance" / build.KERNEL_PATCH.name).read_bytes(),

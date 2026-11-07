@@ -1,0 +1,25 @@
+Reset NSS transmit drop accounting for each peer.
+
+The NSS report contains deltas for multiple peers. Reset the accumulator
+before summing each peer's drop reasons so earlier peers cannot inflate
+later peers' tx_failed values. This changes accounting only.
+
+--- a/package/kernel/mac80211/patches/nss/ath11k/199-002-ath11k_nss-add-nss-driver-interface.patch
++++ b/package/kernel/mac80211/patches/nss/ath11k/199-002-ath11k_nss-add-nss-driver-interface.patch
+@@ -48,7 +48,7 @@
+  ath11k_ahb-y += ahb.o
+ --- /dev/null
+ +++ b/drivers/net/wireless/ath/ath11k/nss.c
+-@@ -0,0 +1,2399 @@
++@@ -0,0 +1,2400 @@
+ +// SPDX-License-Identifier: BSD-3-Clause-Clear
+ +/*
+ + * Copyright (c) 2020 The Linux Foundation. All rights reserved.
+@@ -168,6 +168,7 @@
+ +		peer->nss.nss_stats->tx_bytes += tx_bytes;
+ +		peer->nss.nss_stats->tx_retries += pstats->tx.retries;
+ +
+++		tx_dropped = 0;
+ +		for (j = 0; j < NSS_WIFILI_TQM_RR_MAX; j++)
+ +			tx_dropped += pstats->tx.dropped.drop_stats[j];
+ +

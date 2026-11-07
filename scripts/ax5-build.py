@@ -19,6 +19,7 @@ LVM_PATCH = REPO / "patches/feeds/0002-ax5-lvm-explicit-activation.patch"
 DMEVENTD_PATCH = REPO / "patches/feeds/0003-ax5-lvm-dmeventd.patch"
 EXTROOT_PATCH = REPO / "patches/ax5-extroot-block.patch"
 SOURCE_PATCH = REPO / "patches/source/0001-ax5-jdcloud-describe-fixed-emmc-bus.patch"
+NSS_STATS_PATCH = REPO / "patches/source/0003-ath11k-nss-reset-per-peer-tx-drops.patch"
 KERNEL_PATCH = REPO / "patches/kernel/9999-mmc-core-retry-ax5-hs400-init-with-hs200.patch"
 HS400_PATCH = REPO / "patches/source/0002-ax5-jdcloud-experimental-hs400.patch"
 STORAGE_MODULES = REPO / "configs/ax5-dynamic-storage.mk"
@@ -28,7 +29,7 @@ DTS_PATH = Path(
     "target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-ax5-jdcloud.dts"
 )
 REQUIRED = (
-    "luci", "samba4-server", "samba4-admin", "samba4-client", "luci-app-samba4",
+    "luci", "wifi-auto-channel", "samba4-server", "samba4-admin", "samba4-client", "luci-app-samba4",
     "avahi-dbus-daemon", "wsdd2", "minidlna", "luci-app-minidlna",
     "nfs-kernel-server", "nfs-utils", "kmod-fs-nfsd", "rpcbind",
     "kmod-qca-nss-ecm", "kmod-qca-nss-drv-bridge-mgr", "kmod-qca-nss-drv-vlan-mgr",
@@ -128,8 +129,10 @@ def prepare(root):
         raise ValueError("Kernel fallback patch already exists; prepare requires fresh source")
     # Only patch the JDCloud board, not the shared Xiaomi hardware description.
     command = ["git", "-C", str(root), "apply"]
-    subprocess.run([*command, "--check", str(SOURCE_PATCH)], check=True)
-    subprocess.run([*command, str(SOURCE_PATCH)], check=True)
+    for source_patch in (SOURCE_PATCH, NSS_STATS_PATCH):
+        subprocess.run([*command, "--check", str(source_patch)], check=True)
+    for source_patch in (SOURCE_PATCH, NSS_STATS_PATCH):
+        subprocess.run([*command, str(source_patch)], check=True)
     if mode == "hs400":
         subprocess.run([*command, "--check", str(HS400_PATCH)], check=True)
         subprocess.run([*command, str(HS400_PATCH)], check=True)
@@ -392,6 +395,7 @@ def snapshot(root):
     shutil.copyfile(DMEVENTD_PATCH, out / DMEVENTD_PATCH.name)
     shutil.copyfile(EXTROOT_PATCH, out / EXTROOT_PATCH.name)
     shutil.copyfile(SOURCE_PATCH, out / SOURCE_PATCH.name)
+    shutil.copyfile(NSS_STATS_PATCH, out / NSS_STATS_PATCH.name)
     shutil.copyfile(KERNEL_PATCH, out / KERNEL_PATCH.name)
     shutil.copyfile(STORAGE_MODULES, out / STORAGE_MODULES.name)
     if emmc_mode() == "hs400":
@@ -414,6 +418,7 @@ def snapshot(root):
                             for p in (EXTROOT_PATCH, *thin_patches)},
         "source_patches": {
             SOURCE_PATCH.name: hashlib.sha256(SOURCE_PATCH.read_bytes()).hexdigest(),
+            NSS_STATS_PATCH.name: hashlib.sha256(NSS_STATS_PATCH.read_bytes()).hexdigest(),
             **({HS400_PATCH.name: hashlib.sha256(HS400_PATCH.read_bytes()).hexdigest()}
                if emmc_mode() == "hs400" else {}),
         },

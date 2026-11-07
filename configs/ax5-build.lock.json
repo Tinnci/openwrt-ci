@@ -12,6 +12,7 @@
     {"name": "luci", "url": "https://github.com/immortalwrt/luci.git", "commit": "61e876e98f91446fd8968dfede721b98ddf80a32"},
     {"name": "routing", "url": "https://github.com/openwrt/routing.git", "commit": "48c808034414a2112cf9d5261a20a320e8d0d170"},
     {"name": "telephony", "url": "https://github.com/openwrt/telephony.git", "commit": "2618106d5846a4a542fdf5809f0d3ed228ce439b"},
-    {"name": "video", "url": "https://github.com/openwrt/video.git", "commit": "094bf58da6682f895255a35a84349a79dab4bf95"}
+    {"name": "video", "url": "https://github.com/openwrt/video.git", "commit": "094bf58da6682f895255a35a84349a79dab4bf95"},
+    {"name": "wifi_auto_channel", "url": "https://github.com/Tinnci/wifi-auto-channel.git", "commit": "78544330c15f77f0515b5648c540d73e8a97b313"}
   ]
 }

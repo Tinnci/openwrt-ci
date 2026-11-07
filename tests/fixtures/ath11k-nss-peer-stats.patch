@@ -1,0 +1,195 @@
+From 0fa55ca418c8afd6da242407a184c23548c553dc Mon Sep 17 00:00:00 2001
+From: Sriram R <srirrama@codeaurora.org>
+Date: Fri, 5 Jun 2020 12:21:15 +0530
+Subject: [PATCH 2/3] ath11k: Add nss driver interface
+
+This patch adds interface support for accessing nss driver with
+support for initialization, teardown, vap up/down, peer create/delete,
+tx/rx. NSS Stats addition is not part of this version.
+
+Signed-off-by: Sriram R <srirrama@codeaurora.org>
+---
+ drivers/net/wireless/ath/ath11k/Kconfig  |    9 +
+ drivers/net/wireless/ath/ath11k/Makefile |    1 +
+ drivers/net/wireless/ath/ath11k/nss.c    | 1762 ++++++++++++++++++++++++++++++
+ drivers/net/wireless/ath/ath11k/nss.h    |  217 ++++
+ 4 files changed, 1989 insertions(+)
+ create mode 100644 drivers/net/wireless/ath/ath11k/nss.c
+ create mode 100644 drivers/net/wireless/ath/ath11k/nss.h
+
+--- a/drivers/net/wireless/ath/ath11k/Kconfig
++++ b/drivers/net/wireless/ath/ath11k/Kconfig
+@@ -13,6 +13,16 @@ config ATH11K
+ 
+ 	  If you choose to build a module, it'll be called ath11k.
+ 
++config ATH11K_NSS_SUPPORT
++	bool "QCA ath11k nss support"
++	depends on ATH11K
++	default n
++	select MAC80211_NSS_SUPPORT
++	---help---
++	  Enables NSS offload support for ATH11K driver
++
++	  If unsure, say Y to enable NSS offload support.
++
+ config ATH11K_AHB
+ 	tristate "Atheros ath11k AHB support"
+ 	depends on m
+--- a/drivers/net/wireless/ath/ath11k/Makefile
++++ b/drivers/net/wireless/ath/ath11k/Makefile
+@@ -28,6 +28,7 @@ ath11k-$(CPTCFG_ATH11K_THERMAL) += therm
+ ath11k-$(CPTCFG_ATH11K_SPECTRAL) += spectral.o
+ ath11k-$(CONFIG_PM) += wow.o
+ ath11k-$(CONFIG_DEV_COREDUMP) += coredump.o
++ath11k-$(CPTCFG_ATH11K_NSS_SUPPORT) += nss.o
+ 
+ obj-$(CPTCFG_ATH11K_AHB) += ath11k_ahb.o
+ ath11k_ahb-y += ahb.o
+--- /dev/null
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -0,0 +1,2399 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * Copyright (c) 2020 The Linux Foundation. All rights reserved.
++ */
++
++#include "debug.h"
++#include "mac.h"
++#include "nss.h"
++#include "core.h"
++#include "peer.h"
++#include "hif.h"
++#include "wmi.h"
++#include "../../../../../net/mac80211/sta_info.h"
++
++/*-----------------------------ATH11K-NSS Helpers--------------------------*/
++
++static enum ath11k_nss_opmode
++ath11k_nss_get_vdev_opmode(struct ath11k_vif *arvif)
++{
++	switch (arvif->vdev_type) {
++	case WMI_VDEV_TYPE_AP:
++		return ATH11K_NSS_OPMODE_AP;
++	case WMI_VDEV_TYPE_STA:
++		return ATH11K_NSS_OPMODE_STA;
++	default:
++		ath11k_warn(arvif->ar->ab, "unsupported nss vdev type %d\n",
++			    arvif->vdev_type);
++	}
++
++	return ATH11K_NSS_OPMODE_UNKNOWN;
++}
++
++static void ath11k_nss_wifili_stats_sync(struct ath11k_base *ab,
++					 struct nss_wifili_stats_sync_msg *wlsoc_stats)
++{
++	struct nss_wifili_device_stats *devstats = &wlsoc_stats->stats;
++	struct ath11k_soc_dp_stats *soc_stats = &ab->soc_stats;
++	int i;
++
++	spin_lock_bh(&ab->base_lock);
++
++	soc_stats->err_ring_pkts += devstats->rxwbm_stats.err_src_rxdma;
++	soc_stats->invalid_rbm += devstats->rxwbm_stats.invalid_buf_mgr;
++
++	for (i = 0; i < HAL_REO_ENTR_RING_RXDMA_ECODE_MAX; i++)
++		soc_stats->rxdma_error[i] += devstats->rxwbm_stats.err_dma_codes[i];
++
++	for (i = 0; i < HAL_REO_DEST_RING_ERROR_CODE_MAX; i++)
++		soc_stats->reo_error[i] += devstats->rxwbm_stats.err_reo_codes[i];
++
++	for (i = 0; i < DP_REO_DST_RING_MAX; i++)
++		soc_stats->hal_reo_error[i] += devstats->rxreo_stats[i].ring_error;
++
++	for (i = 0; i < DP_TCL_NUM_RING_MAX; i++)
++		soc_stats->tx_err.desc_na[i] += devstats->tcl_stats[i].tcl_ring_full;
++
++
++	for (i = 0; i < NSS_WIFILI_MAX_TCL_DATA_RINGS_MSG; i++)
++		atomic_add(devstats->txcomp_stats[i].invalid_bufsrc
++			  + devstats->txcomp_stats[i].invalid_cookie
++			  + devstats->tx_sw_pool_stats[i].desc_alloc_fail
++			  + devstats->tx_ext_sw_pool_stats[i].desc_alloc_fail,
++			  &soc_stats->tx_err.misc_fail);
++
++	for (i = 0; i < DP_TCL_NUM_RING_MAX; i++)
++		atomic_add(devstats->tx_data_stats[i].tx_send_fail_cnt,
++			   &soc_stats->tx_err.misc_fail);
++
++	spin_unlock_bh(&ab->base_lock);
++}
++
++static void ath11k_nss_get_peer_stats(struct ath11k_base *ab, struct nss_wifili_peer_stats *stats)
++{
++	struct ath11k_peer *peer;
++	struct nss_wifili_peer_ctrl_stats *pstats = NULL;
++	int i, j;
++	u64 tx_packets, tx_bytes, tx_dropped = 0;
++	u64 rx_packets, rx_bytes, rx_dropped;
++
++	if (!ab->nss.stats_enabled)
++		return;
++
++	for (i = 0; i < stats->npeers; i++) {
++		pstats = &stats->wpcs[i];
++
++		rcu_read_lock();
++		spin_lock_bh(&ab->base_lock);
++
++		peer = ath11k_peer_find_by_id(ab, pstats->peer_id);
++		if (!peer || !peer->sta) {
++			ath11k_dbg(ab, ATH11K_DBG_NSS, "nss wifili: unable to find peer %d\n", pstats->peer_id);
++			spin_unlock_bh(&ab->base_lock);
++			rcu_read_unlock();
++			continue;
++		}
++
++		if (!peer->nss.nss_stats) {
++			spin_unlock_bh(&ab->base_lock);
++			rcu_read_unlock();
++			return;
++		}
++
++		if (pstats->tx.tx_success_cnt)
++			peer->nss.nss_stats->last_ack = jiffies;
++
++		if (pstats->rx.rx_recvd) {
++			peer->nss.nss_stats->last_rx = jiffies;
++		}
++
++		tx_packets = pstats->tx.tx_mcast_cnt +
++			pstats->tx.tx_ucast_cnt +
++			pstats->tx.tx_bcast_cnt;
++		peer->nss.nss_stats->tx_packets += tx_packets;
++		tx_bytes = pstats->tx.tx_mcast_bytes +
++			pstats->tx.tx_ucast_bytes +
++			pstats->tx.tx_bcast_bytes;
++		peer->nss.nss_stats->tx_bytes += tx_bytes;
++		peer->nss.nss_stats->tx_retries += pstats->tx.retries;
++
++		for (j = 0; j < NSS_WIFILI_TQM_RR_MAX; j++)
++			tx_dropped += pstats->tx.dropped.drop_stats[j];
++
++		peer->nss.nss_stats->tx_failed += tx_dropped;
++
++		ATH11K_NSS_TXRX_NETDEV_STATS(tx, peer->vif, tx_bytes, tx_packets);
++
++		rx_packets = pstats->rx.rx_recvd;
++		peer->nss.nss_stats->rx_packets += rx_packets;
++		rx_bytes = pstats->rx.rx_recvd_bytes;
++		peer->nss.nss_stats->rx_bytes += rx_bytes;
++		rx_dropped = pstats->rx.err.mic_err +
++			pstats->rx.err.decrypt_err;
++		peer->nss.nss_stats->rx_dropped += rx_dropped;
++
++		ATH11K_NSS_TXRX_NETDEV_STATS(rx, peer->vif, rx_bytes, rx_packets);
++
++		spin_unlock_bh(&ab->base_lock);
++		rcu_read_unlock();
++	}
++}
++
++void ath11k_nss_ext_rx_stats(struct ath11k_base *ab, struct htt_rx_ring_tlv_filter *tlv_filter)
++{
++	if (ab->nss.enabled)

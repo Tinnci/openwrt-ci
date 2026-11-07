@@ -83,3 +83,23 @@ CRC32C 回读校验、顺序读和 15 秒 4 KiB 随机读，退出清理测试�
 - https://docs.kernel.org/admin-guide/device-mapper/thin-provisioning.html
 - https://docs.kernel.org/networking/scaling.html
 - https://fio.readthedocs.io/en/latest/fio_doc.html
+
+## 2.4 GHz 空闲期信道优化（2026-11-07）
+
+构建通过锁定的 wifi_auto_channel feed 集成 Tinnci/wifi-auto-channel，
+种子配置选择 wifi-auto-channel 包，产物清单核验要求该包存在。
+feed 提交与其他源码版本一并记录在 provenance 中。
+
+实验机安装 0.2.0-r2 后通过 115 项信道测试和 26 项空闲/测量策略测试。
+服务使用 procd 并启用开机启动，仅对 2.4 GHz、20 MHz AP 工作。
+默认 radio1 开启；带 STA 上联的无线电从候选设备中排除。
+每 30 秒检查客户端，连续观测五分钟无客户端后，每五分钟评估拥塞。
+三次高占用采样、30 分评分改善和一小时切换冷却共同决定是否切换。
+候选信道为 1/6/11，仍受当前监管域限制。
+
+扫描等待结果并有超时保护；扫描后及切换前再次核对客户端。
+缺失/异常或全部候选近 100% 饱和的测量会推迟切换。
+CSA 请求完成后核对实际 AP 状态及信道，失败时请求回退并进入冷却。
+实验机已观察到五分钟空闲门限生效，实际被动扫描及 AP 连续运行检查通过。
+2.4 GHz 高占用原因、长期优化效果以及客户端跟随 CSA 的连续性仍待验证。
+配置为 /etc/config/wifi-auto-channel，日志使用 logread -e wifi-auto-channel 查看。
